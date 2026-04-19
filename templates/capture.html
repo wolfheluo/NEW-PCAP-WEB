@@ -601,6 +601,12 @@ socket.on('analysis_progress', data => {
     if (data.project !== PROJECT_NAME) return;
     showAnalyzing(true);
     setProgress(data.percent);
+    // 更新分析狀態卡片（一有資料即變橘色）
+    if (data.total != null) {
+        currentPcapCount     = data.total;
+        currentAnalyzedCount = data.analyzed ?? 0;
+        updateAnalyzeCard(currentAnalyzedCount, currentPcapCount);
+    }
 
     const stageMap = {
         'suricata': ['log-suricata', `Suricata 分析中：${data.file}`],

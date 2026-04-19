@@ -333,9 +333,20 @@ def _analyze_single_pcap(project_name, pcap_file, filter_ips):
             capture_states[project_name]['analyzing'] = capture_states[project_name].get('analyzing', 0) + 1
 
     def _emit(stage, percent):
+        pcap_dir_path = get_pcap_dir(project_name)
+        all_pcaps = sorted(glob.glob(os.path.join(pcap_dir_path, '*.pcap')))
+        # 側錄中時，最新那個可能仍在寫入，不計入 total（與 _watch_pcap_files 邏輯一致）
+        with capture_states_lock:
+            is_capturing = capture_states.get(project_name, {}).get('status') == 'capturing'
+        if is_capturing and len(all_pcaps) > 1:
+            total_pcap = len(all_pcaps) - 1
+        else:
+            total_pcap = len(all_pcaps)
+        analyzed = len(glob.glob(os.path.join(project_dir, '*_analysis.json')))
         socketio.emit('analysis_progress', {
             'project': project_name, 'stage': stage,
-            'file': fname, 'percent': percent
+            'file': fname, 'percent': percent,
+            'analyzed': analyzed, 'total': total_pcap,
         })
         stage_msg = {
             'suricata': f'Suricata 分析中：{fname}',
@@ -359,7 +370,13 @@ def _analyze_single_pcap(project_name, pcap_file, filter_ips):
 
         _emit('complete', 100)
         pcap_dir_path = get_pcap_dir(project_name)
-        total_pcap = len(glob.glob(os.path.join(pcap_dir_path, '*.pcap')))
+        all_pcaps_done = sorted(glob.glob(os.path.join(pcap_dir_path, '*.pcap')))
+        with capture_states_lock:
+            is_capturing = capture_states.get(project_name, {}).get('status') == 'capturing'
+        if is_capturing and len(all_pcaps_done) > 1:
+            total_pcap = len(all_pcaps_done) - 1
+        else:
+            total_pcap = len(all_pcaps_done)
         analyzed = len(glob.glob(os.path.join(project_dir, '*_analysis.json')))
         socketio.emit('analysis_complete', {
             'project': project_name, 'file': fname,
