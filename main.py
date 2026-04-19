@@ -294,7 +294,15 @@ def _analyze_single_pcap(project_name, pcap_file, filter_ips):
 
 def _watch_pcap_files(project_name, pcap_dir, filter_ips):
     """監控 pcap 目錄，偵測已完成的 PCAP 並觸發分析"""
+    # 預先將已有對應分析輸出的 pcap 標記為已處理，避免重啟後重複分析
     processed = set()
+    project_dir = get_project_dir(project_name)
+    for existing_pcap in glob.glob(os.path.join(pcap_dir, "*.pcap")):
+        stem = Path(existing_pcap).stem
+        tshark_out = os.path.join(project_dir, f"{stem}_analysis.json")
+        suricata_out = os.path.join(project_dir, "suricata", stem, "eve.json")
+        if os.path.exists(tshark_out) or os.path.exists(suricata_out):
+            processed.add(existing_pcap)
 
     while True:
         time.sleep(3)
