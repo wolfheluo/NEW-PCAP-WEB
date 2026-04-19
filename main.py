@@ -249,7 +249,50 @@ def _poll_packet_count(project_name, pcap_dir):
                     current = capture_states[project_name].get('packet_count', 0)
                     if total > current:
                         capture_states[project_name]['packet_count'] = total
-                        socketio.emit('packet_count', {'project': project_name, 'count': total})
+
+        # 每輪都更新檔案大小（PCAP 持續增長，即使封包數未變也要推送）
+        all_pcaps = glob.glob(os.path.join(pcap_dir, '*.pcap'))
+        total_pcap_bytes = sum(os.path.getsize(f) for f in all_pcaps if os.path.isfile(f))
+        with capture_states_lock:
+            if project_name in capture_states:
+                pcap_prefix = capture_states[project_name].get('pcap_prefix', '')
+                current_bytes = sum(
+                    os.path.getsize(f) for f in all_pcaps
+                    if os.path.isfile(f) and (not pcap_prefix or os.path.basename(f).startswith(pcap_prefix))
+                )
+                current_count = capture_states[project_name].get('packet_count', 0)
+                socketio.emit('packet_count', {
+                    'project': project_name,
+                    'count': current_count,
+                    'current_bytes': current_bytes,
+                    'total_pcap_bytes': total_pcap_bytes,
+                })
+
+
+def _load_pcap_stats(project_name: str) -> dict:
+    """讀取專案累計封包統計（跨 session 持久化）"""
+    stats_path = os.path.join(get_project_dir(project_name), 'pcap_stats.json')
+    if os.path.exists(stats_path):
+        try:
+            with open(stats_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {'total_packets': 0}
+
+
+def _save_pcap_stats(project_name: str, delta_packets: int):
+    """將本次 session 封包數累加寫入 pcap_stats.json"""
+    if delta_packets <= 0:
+        return
+    try:
+        stats = _load_pcap_stats(project_name)
+        stats['total_packets'] = stats.get('total_packets', 0) + delta_packets
+        stats_path = os.path.join(get_project_dir(project_name), 'pcap_stats.json')
+        with open(stats_path, 'w', encoding='utf-8') as f:
+            json.dump(stats, f)
+    except Exception:
+        pass
 
 
 def _append_capture_log(project_name: str, msg: str, stage: str = ''):
@@ -530,6 +573,7 @@ def api_capture_start():
             'filter_ips': filter_ips,
             'iface': iface_index,
             'analyzing': 0,
+            'pcap_prefix': f"{project_name}_{timestamp}",
         }
 
     threading.Thread(target=_read_dumpcap_stderr, args=(project_name, proc), daemon=True).start()
@@ -575,6 +619,12 @@ def api_capture_stop():
     with capture_states_lock:
         if project_name in capture_states:
             capture_states[project_name]['status'] = 'stopped'
+            final_packets = capture_states[project_name].get('packet_count', 0)
+        else:
+            final_packets = 0
+
+    # 將本次 session 封包數累加到持久化統計
+    _save_pcap_stats(project_name, final_packets)
 
     _append_capture_log(project_name, '側錄已停止，正在排入分析佇列…', 'stop')
     socketio.emit('capture_stopped', {'project': project_name})
@@ -583,15 +633,41 @@ def api_capture_stop():
 
 @app.route('/api/capture/status/<project_name>')
 def api_capture_status(project_name):
+    pcap_dir = get_pcap_dir(project_name)
+    all_pcaps = glob.glob(os.path.join(pcap_dir, '*.pcap'))
+    total_pcap_bytes = sum(os.path.getsize(f) for f in all_pcaps if os.path.isfile(f))
+    saved_stats = _load_pcap_stats(project_name)
+    saved_total_packets = saved_stats.get('total_packets', 0)
+
     with capture_states_lock:
         state = capture_states.get(project_name)
+
     if not state:
-        return jsonify({'status': 'idle', 'packet_count': 0, 'analyzing': 0})
+        return jsonify({
+            'status': 'idle', 'packet_count': 0, 'analyzing': 0,
+            'current_bytes': 0,
+            'total_pcap_bytes': total_pcap_bytes,
+            'total_packets': saved_total_packets,
+        })
+
+    pcap_prefix = state.get('pcap_prefix', '')
+    current_bytes = sum(
+        os.path.getsize(f) for f in all_pcaps
+        if os.path.isfile(f) and (not pcap_prefix or os.path.basename(f).startswith(pcap_prefix))
+    )
+    current_packets = state['packet_count']
+    status = state['status']
+    # 若仍在側錄中，total 加上本次尚未持久化的封包數；若已停止，已在 stop 時寫入
+    total_packets = saved_total_packets + (current_packets if status in ('capturing', 'stopping') else 0)
+
     return jsonify({
-        'status': state['status'],
-        'packet_count': state['packet_count'],
+        'status': status,
+        'packet_count': current_packets,
         'started_at': state.get('started_at', ''),
         'analyzing': state.get('analyzing', 0),
+        'current_bytes': current_bytes,
+        'total_pcap_bytes': total_pcap_bytes,
+        'total_packets': total_packets,
     })
 
 
