@@ -232,7 +232,9 @@ const socket = io();
 
 let captureStartTime = null;
 let timerInterval = null;
-let currentPcapCount = 0;  // 追蹤目前已知的 PCAP 數量
+let currentPcapCount = 0;    // 追蹤目前已知的 PCAP 數量
+let currentAnalyzedCount = 0; // 追蹤目前已分析的 PCAP 數量
+let isCapturing = false;      // 目前是否正在側錄中
 
 // ─── 初始化 ───────────────────────────────────
 document.addEventListener('DOMContentLoaded', function () {
@@ -318,29 +320,36 @@ function pollStatus() {
                     }
                 }
             }
-            currentPcapCount = data.total_pcap_count ?? 0;
-            updateAnalyzeCard(data.analyzed_count ?? 0, data.total_pcap_count ?? 0);
+            currentPcapCount    = data.total_pcap_count ?? 0;
+            currentAnalyzedCount = data.analyzed_count ?? 0;
+            updateAnalyzeCard(currentAnalyzedCount, currentPcapCount);
             if (data.analyzing > 0) showAnalyzing(true);
         })
         .catch(() => {});
 }
 
 // ─── 分析狀態卡片 ─────────────────────────────
-function resetAnalyzeCard() {
-    const card = document.getElementById('doneCard');
-    document.getElementById('statusDone').classList.add('d-none');
-    if (currentPcapCount > 0) {
-        // 有舊 PCAP 尚待分析 → 橘色【待分析】
-        card.className = 'card mt-3 border-warning';
-        document.getElementById('statusPending').classList.add('d-none');
-        document.getElementById('statusAnalyzing').classList.remove('d-none');
-        document.getElementById('analyzeProgress').textContent = `0 / ${currentPcapCount}`;
+// 切換 statusAnalyzing div 的外觀（橘色=分析中 / 灰色=待分析）
+function setAnalyzingStyle(isOrange) {
+    const icon  = document.querySelector('#statusAnalyzing i');
+    const text  = document.querySelector('#statusAnalyzing p');
+    const badge = document.getElementById('analyzeProgress');
+    if (isOrange) {
+        icon.className   = 'fas fa-spinner fa-spin fa-2x text-warning mb-2';
+        text.className   = 'mb-1 fw-semibold text-warning';
+        text.textContent = '分析中…';
+        badge.className  = 'badge bg-warning text-dark fs-6';
     } else {
-        // 全新專案待側錄 → 灰色【待分析】
-        card.className = 'card mt-3 border-secondary';
-        document.getElementById('statusPending').classList.remove('d-none');
-        document.getElementById('statusAnalyzing').classList.add('d-none');
+        icon.className   = 'fas fa-hourglass-half fa-2x text-secondary mb-2';
+        text.className   = 'mb-1 fw-semibold text-secondary';
+        text.textContent = '待分析';
+        badge.className  = 'badge bg-secondary fs-6';
     }
+}
+
+function resetAnalyzeCard() {
+    // 開始側錄時，直接以目前已知的 analyzed/total 更新卡片
+    updateAnalyzeCard(currentAnalyzedCount, currentPcapCount);
 }
 
 function updateAnalyzeCard(analyzed, total) {
@@ -350,21 +359,32 @@ function updateAnalyzeCard(analyzed, total) {
     const card      = document.getElementById('doneCard');
 
     if (total > 0 && analyzed >= total) {
-        // 全部完成
-        card.className = 'card mt-3 border-success';
-        pending.classList.add('d-none');
-        analyzing.classList.add('d-none');
-        done.classList.remove('d-none');
-        document.getElementById('analyzeProgressDone').textContent = `${analyzed} / ${total}`;
-    } else if (analyzed > 0 || total > 0) {
-        // 部分完成 / 分析中
+        if (isCapturing) {
+            // 側錄中且本批全部分析完 → 灰色「待分析 N/N」
+            card.className = 'card mt-3 border-secondary';
+            pending.classList.add('d-none');
+            analyzing.classList.remove('d-none');
+            done.classList.add('d-none');
+            setAnalyzingStyle(false);
+            document.getElementById('analyzeProgress').textContent = `${analyzed} / ${total}`;
+        } else {
+            // 非側錄，全部完成 → 綠色「分析完成」
+            card.className = 'card mt-3 border-success';
+            pending.classList.add('d-none');
+            analyzing.classList.add('d-none');
+            done.classList.remove('d-none');
+            document.getElementById('analyzeProgressDone').textContent = `${analyzed} / ${total}`;
+        }
+    } else if (total > 0) {
+        // 有未分析的 PCAP → 橘色「分析中 N/M」
         card.className = 'card mt-3 border-warning';
         pending.classList.add('d-none');
         analyzing.classList.remove('d-none');
         done.classList.add('d-none');
-        document.getElementById('analyzeProgress').textContent = `${analyzed} / ${total || '?'}`;
+        setAnalyzingStyle(true);
+        document.getElementById('analyzeProgress').textContent = `${analyzed} / ${total}`;
     } else {
-        // 尚未開始
+        // 尚未開始 → 灰色「待分析」
         card.className = 'card mt-3 border-secondary';
         pending.classList.remove('d-none');
         analyzing.classList.add('d-none');
@@ -398,18 +418,19 @@ function startCapture() {
             return;
         }
         captureStartTime = new Date();
+        // 先設好 capturing 狀態，再 reset 卡片（resetAnalyzeCard 需要 isCapturing）
+        setCapturingUI(0);
+        startTimer();
         // 本次封包數歸零
         document.getElementById('currentPacketCount').textContent = '0';
         document.getElementById('currentBytes').textContent = '—';
-        // 分析狀態卡片重置為「待分析」
+        // 分析狀態卡片重置（isCapturing 已為 true，顯示灰色待分析）
         resetAnalyzeCard();
         // 進度條重置
         setProgress(0);
         const fill = document.getElementById('progressFill');
         fill.classList.add('progress-bar-striped', 'progress-bar-animated');
         fill.classList.remove('bg-success');
-        setCapturingUI(0);
-        startTimer();
         addLog(`開始側錄，每 ${data.split_mb ?? 200} MB 自動切割一個 PCAP 檔案`, 'text-info');
     })
     .catch(e => alert('請求失敗：' + e));
@@ -446,6 +467,7 @@ function setCapturingUI(count) {
     badge.className = 'badge bg-danger status-badge';
     badge.textContent = '側錄中';
     document.getElementById('captureCard').classList.add('capturing');
+    isCapturing = true;
     setLed('capturing');
     if (count !== null) updateStats({packet_count: count});
 }
@@ -459,6 +481,7 @@ function setStoppedUI(count) {
     badge.className = 'badge bg-secondary status-badge';
     badge.textContent = '已停止';
     document.getElementById('captureCard').classList.remove('capturing');
+    isCapturing = false;
     setLed('idle');
     if (count !== null) updateStats({packet_count: count});
 }
@@ -479,9 +502,10 @@ function showAnalyzing(show, isDone = false) {
         if (isDone) {
             fill.classList.remove('progress-bar-striped', 'progress-bar-animated');
             fill.classList.add('bg-success');
-            setLed('done');
+            // 若仍在側錄中，LED 回到側錄紅燈；否則顯示完成綠燈
+            setLed(isCapturing ? 'capturing' : 'done');
         } else {
-            setLed('idle');
+            setLed(isCapturing ? 'capturing' : 'idle');
         }
     }
 }
