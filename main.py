@@ -17,6 +17,7 @@ import threading
 import time
 import re
 import ipaddress
+import requests
 from datetime import datetime
 from pathlib import Path
 from collections import defaultdict
@@ -695,6 +696,124 @@ def _generate_anomaly_alerts(summary):
     except Exception as e:
         print(f"異常警示生成失敗: {e}")
     return alerts
+
+
+# ─────────────────────────────────────────────
+# 設定頁面
+# ─────────────────────────────────────────────
+
+@app.route('/settings')
+def settings():
+    return render_template('settings.html')
+
+
+def _get_suricata_rules():
+    """從 suricata.yaml 解析啟用中的 rule files，失敗時改列 rules 目錄下的 .rules 檔。"""
+    suricata_dir = os.path.dirname(SURICATA_EXE)
+    rules_list = []
+
+    yaml_path = os.path.join(suricata_dir, 'suricata.yaml')
+    if os.path.exists(yaml_path):
+        try:
+            in_rule_files = False
+            with open(yaml_path, 'r', encoding='utf-8', errors='ignore') as f:
+                for line in f:
+                    stripped = line.strip()
+                    if stripped.startswith('rule-files:'):
+                        in_rule_files = True
+                        continue
+                    if in_rule_files:
+                        if stripped.startswith('- '):
+                            rules_list.append(stripped[2:].strip().strip('"').strip("'"))
+                        elif stripped and not stripped.startswith('#') and ':' in stripped and not stripped.startswith('- '):
+                            break
+            if rules_list:
+                return rules_list
+        except Exception:
+            pass
+
+    # 備用：列出 rules 目錄下的 .rules 檔
+    rules_dir = os.path.join(suricata_dir, 'rules')
+    if os.path.exists(rules_dir):
+        for fname in sorted(os.listdir(rules_dir)):
+            if fname.endswith('.rules'):
+                rules_list.append(fname)
+    return rules_list
+
+
+@app.route('/api/settings/check')
+def api_settings_check():
+    result = {}
+
+    geoip_abs = os.path.abspath(GEOIP_DB)
+    result['geoip'] = {
+        'label': 'GeoLite2-City.mmdb',
+        'ok': os.path.exists(GEOIP_DB),
+        'detail': geoip_abs
+    }
+
+    result['tshark'] = {
+        'label': 'TShark',
+        'ok': os.path.exists(TSHARK_EXE),
+        'detail': TSHARK_EXE
+    }
+
+    result['suricata'] = {
+        'label': 'Suricata',
+        'ok': os.path.exists(SURICATA_EXE),
+        'detail': SURICATA_EXE
+    }
+
+    rules_files = _get_suricata_rules()
+    result['rules'] = {
+        'label': 'Suricata 啟用 Rules',
+        'ok': len(rules_files) > 0,
+        'detail': f'{len(rules_files)} 個規則檔',
+        'rules': rules_files
+    }
+
+    return jsonify(result)
+
+
+@app.route('/api/settings/download/<target>', methods=['POST'])
+def api_settings_download(target):
+    if target == 'geolite':
+        url = 'https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-City.mmdb'
+        save_path = os.path.abspath(GEOIP_DB)
+    elif target == 'rules':
+        url = 'https://rules.emergingthreats.net/open/suricata-7.0.3/emerging-all.rules'
+        suricata_dir = os.path.dirname(SURICATA_EXE)
+        save_path = os.path.abspath(os.path.join(suricata_dir, 'rules', 'emerging-all.rules'))
+    else:
+        return jsonify({'error': '無效的目標'}), 400
+
+    def _download(url, save_path, target):
+        try:
+            socketio.emit('download_progress', {'target': target, 'status': 'start', 'progress': 0, 'message': '下載中...'})
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            with requests.get(url, stream=True, timeout=120) as r:
+                r.raise_for_status()
+                total = int(r.headers.get('content-length', 0))
+                downloaded = 0
+                with open(save_path, 'wb') as f:
+                    for chunk in r.iter_content(chunk_size=1024 * 1024):
+                        if chunk:
+                            f.write(chunk)
+                            downloaded += len(chunk)
+                            if total > 0:
+                                progress = int(downloaded / total * 100)
+                                socketio.emit('download_progress', {
+                                    'target': target, 'status': 'downloading',
+                                    'progress': progress,
+                                    'message': f'{progress}%'
+                                })
+            socketio.emit('download_progress', {'target': target, 'status': 'done', 'progress': 100, 'message': '完成'})
+        except Exception as e:
+            socketio.emit('download_progress', {'target': target, 'status': 'error', 'progress': 0, 'message': str(e)})
+
+    t = threading.Thread(target=_download, args=(url, save_path, target), daemon=True)
+    t.start()
+    return jsonify({'ok': True, 'message': '下載已開始'})
 
 
 # ─────────────────────────────────────────────

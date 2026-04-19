@@ -1,0 +1,238 @@
+{% extends "base.html" %}
+{% block title %}系統設定 - PCAP 分析器{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h4 class="mb-0"><i class="fas fa-cog me-2 text-secondary"></i>系統設定</h4>
+    <button id="btn-check" class="btn btn-primary">
+        <i class="fas fa-stethoscope me-1"></i>自我檢測
+    </button>
+</div>
+
+<!-- 檢測結果 -->
+<div id="check-results" class="d-none mb-4">
+    <div class="card shadow-sm">
+        <div class="card-header fw-semibold">
+            <i class="fas fa-clipboard-check me-1"></i>檢測結果
+        </div>
+        <div class="card-body p-0">
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th style="width:40px"></th>
+                        <th>項目</th>
+                        <th>狀態</th>
+                        <th>路徑 / 說明</th>
+                    </tr>
+                </thead>
+                <tbody id="check-table-body"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Suricata Rules 清單 -->
+    <div id="rules-card" class="card shadow-sm mt-3 d-none">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span class="fw-semibold">
+                <i class="fas fa-shield-alt me-1"></i>Suricata 啟用中的 Rules
+            </span>
+            <span id="rules-count" class="badge bg-info">0 個</span>
+        </div>
+        <div class="card-body" style="max-height:300px; overflow-y:auto; padding:0.5rem 1rem;">
+            <ul id="rules-list" class="list-unstyled mb-0 font-monospace small"></ul>
+        </div>
+    </div>
+</div>
+
+<!-- 更新資源 -->
+<div class="card shadow-sm">
+    <div class="card-header fw-semibold">
+        <i class="fas fa-download me-1"></i>更新資源
+    </div>
+    <div class="card-body">
+        <div class="row g-4">
+
+            <!-- 更新 GeoLite -->
+            <div class="col-md-6">
+                <div class="p-3 border rounded">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <div>
+                            <div class="fw-semibold">GeoLite2 資料庫</div>
+                            <div class="text-muted small">GeoLite2-City.mmdb</div>
+                        </div>
+                        <button id="btn-geolite" class="btn btn-outline-primary btn-sm">
+                            <i class="fas fa-download me-1"></i>更新 GeoLite
+                        </button>
+                    </div>
+                    <div id="geolite-status" class="d-none">
+                        <div class="progress mb-1" style="height:6px;">
+                            <div id="geolite-bar" class="progress-bar progress-bar-striped progress-bar-animated"
+                                 role="progressbar" style="width:0%"></div>
+                        </div>
+                        <div id="geolite-msg" class="text-muted small"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 更新 Rules -->
+            <div class="col-md-6">
+                <div class="p-3 border rounded">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <div>
+                            <div class="fw-semibold">Suricata 規則集</div>
+                            <div class="text-muted small">emerging-all.rules</div>
+                        </div>
+                        <button id="btn-rules" class="btn btn-outline-warning btn-sm">
+                            <i class="fas fa-download me-1"></i>更新 Rules
+                        </button>
+                    </div>
+                    <div id="rules-status" class="d-none">
+                        <div class="progress mb-1" style="height:6px;">
+                            <div id="rules-bar" class="progress-bar progress-bar-striped progress-bar-animated bg-warning"
+                                 role="progressbar" style="width:0%"></div>
+                        </div>
+                        <div id="rules-msg" class="text-muted small"></div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
+<script>
+const socket = io();
+
+// ── 自我檢測 ──────────────────────────────────────
+document.getElementById('btn-check').addEventListener('click', function () {
+    const btn = this;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>檢測中...';
+
+    fetch('/api/settings/check')
+        .then(r => r.json())
+        .then(data => {
+            renderCheckResults(data);
+            document.getElementById('check-results').classList.remove('d-none');
+        })
+        .catch(() => alert('檢測失敗，請確認服務是否正常'))
+        .finally(() => {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-stethoscope me-1"></i>自我檢測';
+        });
+});
+
+function renderCheckResults(data) {
+    const tbody = document.getElementById('check-table-body');
+    tbody.innerHTML = '';
+
+    const order = ['geoip', 'tshark', 'suricata', 'rules'];
+    order.forEach(key => {
+        const item = data[key];
+        if (!item) return;
+        const icon = item.ok
+            ? '<i class="fas fa-check-circle text-success fs-5"></i>'
+            : '<i class="fas fa-times-circle text-danger fs-5"></i>';
+        const badge = item.ok
+            ? '<span class="badge bg-success">正常</span>'
+            : '<span class="badge bg-danger">未找到</span>';
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td class="text-center align-middle">${icon}</td>
+            <td class="align-middle fw-semibold">${item.label}</td>
+            <td class="align-middle">${badge}</td>
+            <td class="align-middle text-muted small text-break">${item.detail || ''}</td>
+        `;
+        tbody.appendChild(tr);
+    });
+
+    // Suricata Rules 清單
+    const rulesData = data.rules;
+    if (rulesData && rulesData.rules && rulesData.rules.length > 0) {
+        const card = document.getElementById('rules-card');
+        const list = document.getElementById('rules-list');
+        document.getElementById('rules-count').textContent = rulesData.rules.length + ' 個';
+        list.innerHTML = '';
+        rulesData.rules.forEach(r => {
+            const li = document.createElement('li');
+            li.innerHTML = `<i class="fas fa-file-alt me-1 text-secondary"></i>${r}`;
+            li.className = 'py-1 border-bottom';
+            list.appendChild(li);
+        });
+        card.classList.remove('d-none');
+    } else {
+        document.getElementById('rules-card').classList.add('d-none');
+    }
+}
+
+// ── 下載進度處理 ──────────────────────────────────
+socket.on('download_progress', function (data) {
+    const target = data.target;   // 'geolite' or 'rules'
+    const prefix = target === 'geolite' ? 'geolite' : 'rules';
+
+    const statusDiv = document.getElementById(prefix + '-status');
+    const bar = document.getElementById(prefix + '-bar');
+    const msg = document.getElementById(prefix + '-msg');
+    const btn = document.getElementById('btn-' + prefix);
+
+    statusDiv.classList.remove('d-none');
+
+    if (data.status === 'start' || data.status === 'downloading') {
+        bar.style.width = data.progress + '%';
+        msg.textContent = data.message || '下載中...';
+        if (btn) btn.disabled = true;
+    } else if (data.status === 'done') {
+        bar.style.width = '100%';
+        bar.classList.remove('progress-bar-animated', 'progress-bar-striped');
+        bar.classList.add(target === 'rules' ? 'bg-warning' : '');
+        msg.textContent = '✔ 下載完成';
+        msg.classList.remove('text-muted');
+        msg.classList.add('text-success', 'fw-semibold');
+        if (btn) { btn.disabled = false; }
+    } else if (data.status === 'error') {
+        bar.classList.remove('progress-bar-animated');
+        bar.classList.add('bg-danger');
+        msg.textContent = '✘ 失敗：' + (data.message || '未知錯誤');
+        msg.classList.remove('text-muted');
+        msg.classList.add('text-danger');
+        if (btn) { btn.disabled = false; }
+    }
+});
+
+// ── 更新 GeoLite ──────────────────────────────────
+document.getElementById('btn-geolite').addEventListener('click', function () {
+    resetDownloadUI('geolite');
+    fetch('/api/settings/download/geolite', { method: 'POST' })
+        .then(r => r.json())
+        .then(d => {
+            if (!d.ok) { alert('啟動下載失敗：' + (d.error || '')); }
+        })
+        .catch(() => alert('請求失敗'));
+});
+
+// ── 更新 Rules ────────────────────────────────────
+document.getElementById('btn-rules').addEventListener('click', function () {
+    resetDownloadUI('rules');
+    fetch('/api/settings/download/rules', { method: 'POST' })
+        .then(r => r.json())
+        .then(d => {
+            if (!d.ok) { alert('啟動下載失敗：' + (d.error || '')); }
+        })
+        .catch(() => alert('請求失敗'));
+});
+
+function resetDownloadUI(prefix) {
+    const bar = document.getElementById(prefix + '-bar');
+    const msg = document.getElementById(prefix + '-msg');
+    bar.style.width = '0%';
+    bar.className = 'progress-bar progress-bar-striped progress-bar-animated' +
+                    (prefix === 'rules' ? ' bg-warning' : '');
+    msg.className = 'text-muted small';
+    msg.textContent = '';
+    document.getElementById(prefix + '-status').classList.remove('d-none');
+}
+</script>
+{% endblock %}
