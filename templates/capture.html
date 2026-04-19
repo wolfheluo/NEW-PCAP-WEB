@@ -55,6 +55,39 @@
     0%, 100% { opacity: 1; }
     50%       { opacity: 0.4; }
 }
+
+/* 呼吸燈 LED */
+.capture-led {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #6c757d;
+    box-shadow: 0 0 0 0 rgba(108,117,125,0);
+    transition: background 0.3s;
+    flex-shrink: 0;
+}
+.capture-led.led-capturing {
+    background: #dc3545;
+    animation: led-breathe 1.2s ease-in-out infinite;
+}
+.capture-led.led-analyzing {
+    background: #fd7e14;
+    animation: led-breathe-orange 1.6s ease-in-out infinite;
+}
+.capture-led.led-done {
+    background: #198754;
+    box-shadow: 0 0 6px 2px rgba(25,135,84,.5);
+    animation: none;
+}
+@keyframes led-breathe {
+    0%, 100% { box-shadow: 0 0 4px 2px rgba(220,53,69,.6); opacity: 1; }
+    50%       { box-shadow: 0 0 12px 6px rgba(220,53,69,.2); opacity: 0.6; }
+}
+@keyframes led-breathe-orange {
+    0%, 100% { box-shadow: 0 0 4px 2px rgba(253,126,20,.6); opacity: 1; }
+    50%       { box-shadow: 0 0 12px 6px rgba(253,126,20,.2); opacity: 0.6; }
+}
 </style>
 {% endblock %}
 
@@ -67,7 +100,9 @@
                 <li class="breadcrumb-item active">{{ project_name }}</li>
             </ol>
         </nav>
-        <h2><i class="fas fa-circle-dot me-2 text-danger"></i>封包側錄 — {{ project_name }}</h2>
+        <h2>
+            <span class="capture-led me-2" id="pageLed"></span>封包側錄 — {{ project_name }}
+        </h2>
     </div>
 </div>
 
@@ -77,7 +112,10 @@
         <div class="card card-capture" id="captureCard">
             <div class="card-header d-flex justify-content-between align-items-center">
                 <span><i class="fas fa-sliders me-2"></i>側錄設定</span>
-                <span class="badge bg-secondary status-badge" id="statusBadge">閒置</span>
+                <span class="d-flex align-items-center gap-2">
+                    <span class="capture-led" id="headerLed"></span>
+                    <span class="badge bg-secondary status-badge" id="statusBadge">閒置</span>
+                </span>
             </div>
             <div class="card-body">
 
@@ -194,6 +232,7 @@ const socket = io();
 
 let captureStartTime = null;
 let timerInterval = null;
+let currentPcapCount = 0;  // 追蹤目前已知的 PCAP 數量
 
 // ─── 初始化 ───────────────────────────────────
 document.addEventListener('DOMContentLoaded', function () {
@@ -255,27 +294,55 @@ function loadInterfaces() {
         });
 }
 
-// ─── 查詢初始狀態 ──────────────────────────────
+// ─── 查詢初始狀態（也作為週期性 poll）────────────
 function pollStatus() {
     fetch(`/api/capture/status/${PROJECT_NAME}`)
         .then(r => r.json())
         .then(data => {
-            updateStats(data);
-            updateAnalyzeCard(data.analyzed_count ?? 0, data.total_pcap_count ?? 0);
+            // 只在側錄中才更新本次封包數，避免舊值覆蓋已歸零的畫面
             if (data.status === 'capturing') {
+                updateStats(data);
                 setCapturingUI(data.packet_count);
-                captureStartTime = data.started_at ? new Date(data.started_at) : new Date();
-                startTimer();
-            } else if (data.status === 'stopped' || data.status === 'stopping') {
-                setStoppedUI(data.packet_count);
+                captureStartTime = captureStartTime || (data.started_at ? new Date(data.started_at) : new Date());
+                if (!timerInterval) startTimer();
+            } else {
+                // 非側錄中：只更新總計欄位，不動本次封包數
+                if (data.total_packets != null)
+                    document.getElementById('totalPacketCount').textContent = data.total_packets.toLocaleString();
+                if (data.total_pcap_bytes != null)
+                    document.getElementById('totalBytes').textContent = formatBytes(data.total_pcap_bytes);
+                if (data.status === 'stopped' || data.status === 'stopping') {
+                    if (!document.getElementById('btnStop').classList.contains('d-none')) {
+                        setStoppedUI(null);
+                        stopTimer();
+                    }
+                }
             }
-            if (data.analyzing > 0) {
-                showAnalyzing(true);
-            }
-        });
+            currentPcapCount = data.total_pcap_count ?? 0;
+            updateAnalyzeCard(data.analyzed_count ?? 0, data.total_pcap_count ?? 0);
+            if (data.analyzing > 0) showAnalyzing(true);
+        })
+        .catch(() => {});
 }
 
 // ─── 分析狀態卡片 ─────────────────────────────
+function resetAnalyzeCard() {
+    const card = document.getElementById('doneCard');
+    document.getElementById('statusDone').classList.add('d-none');
+    if (currentPcapCount > 0) {
+        // 有舊 PCAP 尚待分析 → 橘色【待分析】
+        card.className = 'card mt-3 border-warning';
+        document.getElementById('statusPending').classList.add('d-none');
+        document.getElementById('statusAnalyzing').classList.remove('d-none');
+        document.getElementById('analyzeProgress').textContent = `0 / ${currentPcapCount}`;
+    } else {
+        // 全新專案待側錄 → 灰色【待分析】
+        card.className = 'card mt-3 border-secondary';
+        document.getElementById('statusPending').classList.remove('d-none');
+        document.getElementById('statusAnalyzing').classList.add('d-none');
+    }
+}
+
 function updateAnalyzeCard(analyzed, total) {
     const pending   = document.getElementById('statusPending');
     const analyzing = document.getElementById('statusAnalyzing');
@@ -331,6 +398,16 @@ function startCapture() {
             return;
         }
         captureStartTime = new Date();
+        // 本次封包數歸零
+        document.getElementById('currentPacketCount').textContent = '0';
+        document.getElementById('currentBytes').textContent = '—';
+        // 分析狀態卡片重置為「待分析」
+        resetAnalyzeCard();
+        // 進度條重置
+        setProgress(0);
+        const fill = document.getElementById('progressFill');
+        fill.classList.add('progress-bar-striped', 'progress-bar-animated');
+        fill.classList.remove('bg-success');
         setCapturingUI(0);
         startTimer();
         addLog(`開始側錄，每 ${data.split_mb ?? 200} MB 自動切割一個 PCAP 檔案`, 'text-info');
@@ -369,6 +446,7 @@ function setCapturingUI(count) {
     badge.className = 'badge bg-danger status-badge';
     badge.textContent = '側錄中';
     document.getElementById('captureCard').classList.add('capturing');
+    setLed('capturing');
     if (count !== null) updateStats({packet_count: count});
 }
 
@@ -381,6 +459,7 @@ function setStoppedUI(count) {
     badge.className = 'badge bg-secondary status-badge';
     badge.textContent = '已停止';
     document.getElementById('captureCard').classList.remove('capturing');
+    setLed('idle');
     if (count !== null) updateStats({packet_count: count});
 }
 
@@ -391,18 +470,36 @@ function showAnalyzing(show, isDone = false) {
     if (show) {
         badge.classList.remove('d-none');
         card.classList.add('analyzing');
-        // 恢復動畫樣式
         fill.classList.add('progress-bar-striped', 'progress-bar-animated');
         fill.classList.remove('bg-success', 'bg-danger');
+        setLed('analyzing');
     } else {
         badge.classList.add('d-none');
         card.classList.remove('analyzing');
         if (isDone) {
-            // 分析完成：移除動畫，改為純綠色
             fill.classList.remove('progress-bar-striped', 'progress-bar-animated');
             fill.classList.add('bg-success');
+            setLed('done');
+        } else {
+            setLed('idle');
         }
     }
+}
+
+function setLed(state) {
+    const ids = ['pageLed', 'headerLed'];
+    const classMap = {
+        capturing: 'led-capturing',
+        analyzing: 'led-analyzing',
+        done:      'led-done',
+        idle:      ''
+    };
+    ids.forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.classList.remove('led-capturing', 'led-analyzing', 'led-done');
+        if (classMap[state]) el.classList.add(classMap[state]);
+    });
 }
 
 function updateStats(data) {

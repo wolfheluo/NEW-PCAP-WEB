@@ -228,6 +228,14 @@ def _poll_packet_count(project_name, pcap_dir):
         if not pcap_files:
             continue
 
+        # 只統計本次側錄 session 的 PCAP 檔（依 pcap_prefix 過濾）
+        with capture_states_lock:
+            pcap_prefix = capture_states.get(project_name, {}).get('pcap_prefix', '')
+        if pcap_prefix:
+            pcap_files = [f for f in pcap_files if os.path.basename(f).startswith(pcap_prefix)]
+        if not pcap_files:
+            continue
+
         # 若有多個檔案，最新一個可能正在寫入，先只統計其餘的
         check_files = pcap_files[:-1] if len(pcap_files) > 1 else pcap_files
         total = 0
