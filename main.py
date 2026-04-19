@@ -55,6 +55,13 @@ capture_states_lock = threading.Lock()
 # 工具函式
 # ─────────────────────────────────────────────
 
+_FAST_LOG_RE = re.compile(
+    r'^(\S+)\s+\[\*\*\]\s+\[\d+:(\d+):\d+\]\s+(.+?)\s+\[\*\*\]'
+    r'(?:\s+\[Classification:\s*([^\]]+)\])?'
+    r'\s+\[Priority:\s*(\d+)\]'
+    r'\s+\{(\S+)\}\s+(\S+)\s+->\s+(\S+)'
+)
+
 def get_project_dir(name):
     return os.path.join(PROJECT_DIR, name)
 
@@ -70,25 +77,23 @@ def format_bytes(b):
         b /= 1024
     return f"{b:.1f} PB"
 
-def detect_anomalies(summary):
-    count = 0
+def detect_anomalies(project_name):
+    """Count Priority 1+2 alerts from filtered_merged_fast.log (deduplicated by sig_id+msg)."""
+    log_path = os.path.join(get_project_dir(project_name), 'filtered_merged_fast.log')
+    if not os.path.exists(log_path):
+        return 0
+    seen = set()
     try:
-        top_ip = summary.get('top_ip', [])
-        if top_ip and top_ip[0].get('bytes', 0) > 100 * 1024 * 1024:
-            count += 1
-        events = summary.get('event', {})
-        total_events = sum(e.get('count', 0) for e in events.values())
-        if total_events > 0 and events.get('TLS', {}).get('count', 0) / total_events > 0.8:
-            count += 1
-        geo = summary.get('geo', {})
-        total_geo = sum(geo.values())
-        if total_geo > 0:
-            suspicious = sum(v for k, v in geo.items() if k not in ['LOCAL', 'TW', 'US'])
-            if suspicious / total_geo > 0.3:
-                count += 1
+        with open(log_path, 'r', encoding='utf-8', errors='ignore') as f:
+            for line in f:
+                m = _FAST_LOG_RE.match(line.strip())
+                if m:
+                    _, sig_id, msg, _, priority_str, *_ = m.groups()
+                    if int(priority_str) in (1, 2):
+                        seen.add((sig_id, msg))
     except Exception:
         pass
-    return count
+    return len(seen)
 
 def get_tasks():
     tasks = []
@@ -128,7 +133,7 @@ def get_tasks():
                 task['end_time'] = summary.get('flow', {}).get('end_time', '')
                 events = summary.get('event', {})
                 task['total_events'] = sum(e.get('count', 0) for e in events.values())
-                task['anomaly_count'] = detect_anomalies(summary)
+                task['anomaly_count'] = detect_anomalies(item)
             except Exception:
                 pass
 
@@ -614,87 +619,73 @@ def api_event_details(task_name, protocol):
 @app.route('/api/anomaly/<task_name>')
 def api_anomaly(task_name):
     try:
-        summary = _load_summary(task_name)
-        return jsonify(_generate_anomaly_alerts(summary))
+        return jsonify(_parse_fast_log_alerts(task_name))
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 
-def _generate_anomaly_alerts(summary):
-    alerts = []
-    try:
-        top_ip = summary.get('top_ip', [])
-        for i, conn in enumerate(top_ip[:5]):
-            bytes_val = conn.get('bytes', 0)
-            if bytes_val > 50 * 1024 * 1024:
-                connection = conn.get('connection', '')
-                src_ip = connection.split(' -> ')[0].split(':')[0] if ' -> ' in connection else ''
-                alerts.append({
-                    'type': 'high_traffic',
-                    'severity': 'high' if bytes_val > 200 * 1024 * 1024 else 'medium',
-                    'title': '大流量連接警示',
-                    'description': f'偵測到異常大流量連接：{format_bytes(bytes_val)}',
-                    'ip': src_ip, 'connection': connection,
-                    'time': summary.get('flow', {}).get('start_time', ''),
-                    'details': {'bytes': bytes_val, 'rank': i + 1,
-                                'percentage': round(bytes_val / max(summary.get('flow', {}).get('total_bytes', 1), 1) * 100, 2)}
-                })
+def _parse_fast_log_alerts(task_name):
+    log_path = os.path.join(get_project_dir(task_name), 'filtered_merged_fast.log')
+    if not os.path.exists(log_path):
+        return []
 
-        events = summary.get('event', {})
-        total_events = sum(e.get('count', 0) for e in events.values())
-        if total_events > 0:
-            for protocol, event_data in events.items():
-                count = event_data.get('count', 0)
-                percentage = count / total_events * 100
-                if protocol == 'OTHER' and percentage > 50:
-                    alerts.append({
-                        'type': 'protocol_anomaly', 'severity': 'medium',
-                        'title': '未識別協議過多',
-                        'description': f'未識別協議佔 {percentage:.1f}%，可能存在惡意流量',
-                        'ip': event_data.get('top_ip', ''),
-                        'time': summary.get('flow', {}).get('start_time', ''),
-                        'details': {'protocol': protocol, 'count': count, 'percentage': round(percentage, 2)}
-                    })
-                elif protocol in ['TLS', 'TCP'] and percentage > 70:
-                    alerts.append({
-                        'type': 'protocol_anomaly', 'severity': 'low',
-                        'title': f'{protocol} 協議流量過多',
-                        'description': f'{protocol} 佔 {percentage:.1f}%，建議進一步檢查',
-                        'ip': event_data.get('top_ip', ''),
-                        'time': summary.get('flow', {}).get('start_time', ''),
-                        'details': {'protocol': protocol, 'count': count, 'percentage': round(percentage, 2)}
-                    })
+    # key = (sig_id, alert_msg) -> { alert, connections: set }
+    seen: dict = {}
 
-        geo = summary.get('geo', {})
-        total_geo = sum(geo.values())
-        if total_geo > 0:
-            for country, bytes_val in geo.items():
-                pct = bytes_val / total_geo * 100
-                if country in ['RU', 'CN', 'KP', 'IR'] and pct > 5:
-                    alerts.append({
-                        'type': 'geo_anomaly', 'severity': 'medium',
-                        'title': '可疑國家流量警示',
-                        'description': f'偵測到來自 {country} 的流量：{format_bytes(bytes_val)} ({pct:.1f}%)',
-                        'ip': '', 'time': summary.get('flow', {}).get('start_time', ''),
-                        'details': {'country': country, 'bytes': bytes_val, 'percentage': round(pct, 2)}
-                    })
-
-        per_10_minutes = summary.get('flow', {}).get('per_10_minutes', {})
-        for time_str, bytes_val in per_10_minutes.items():
-            try:
-                hour = datetime.strptime(time_str, '%Y-%m-%d %H:%M').hour
-                if (hour >= 22 or hour <= 6) and bytes_val > 100 * 1024 * 1024:
-                    alerts.append({
-                        'type': 'time_anomaly', 'severity': 'medium',
-                        'title': '深夜異常流量',
-                        'description': f'{time_str} 偵測到大流量：{format_bytes(bytes_val)}',
-                        'ip': '', 'time': time_str,
-                        'details': {'time_period': time_str, 'bytes': bytes_val, 'hour': hour}
-                    })
-            except ValueError:
+    with open(log_path, 'r', encoding='utf-8', errors='ignore') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
                 continue
-    except Exception as e:
-        print(f"異常警示生成失敗: {e}")
+            m = _FAST_LOG_RE.match(line)
+            if not m:
+                continue
+            ts, sig_id, msg, classification, priority_str, proto, src, dst = m.groups()
+            priority = int(priority_str)
+            if priority not in (1, 2):
+                continue
+
+            key = (sig_id, msg)
+            conn_str = f'{src} -> {dst}'
+            if key not in seen:
+                seen[key] = {
+                    'sig_id': sig_id,
+                    'msg': msg,
+                    'classification': classification or '',
+                    'priority': priority,
+                    'proto': proto,
+                    'first_time': ts,
+                    'connections': set(),
+                }
+            seen[key]['connections'].add(conn_str)
+
+    alerts = []
+    for entry in seen.values():
+        count = len(entry['connections'])
+        severity = 'critical' if entry['priority'] == 1 else 'high'
+        severity_label = '嚴重' if entry['priority'] == 1 else '高風險'
+        conn_sample = ', '.join(sorted(entry['connections'])[:5])
+        if count > 5:
+            conn_sample += f' … 共 {count} 筆'
+        alerts.append({
+            'type': 'suricata_alert',
+            'severity': severity,
+            'title': entry['msg'],
+            'description': f'[{severity_label}] {entry["msg"]}（{count} 筆連線）',
+            'ip': entry['connections'] and sorted(entry['connections'])[0].split(' -> ')[0] or '',
+            'time': entry['first_time'],
+            'details': {
+                'sig_id': entry['sig_id'],
+                'classification': entry['classification'],
+                'priority': entry['priority'],
+                'proto': entry['proto'],
+                'connections': conn_sample,
+                'count': count,
+            }
+        })
+
+    # 先嚴重後高風險，同優先級按 count 降冪
+    alerts.sort(key=lambda a: (a['details']['priority'], -a['details']['count']))
     return alerts
 
 

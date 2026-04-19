@@ -912,8 +912,9 @@ async function loadAnomalyData() {
         // 生成分組後的 HTML
         const groupsHtml = Object.entries(groupedData).map(([type, anomalies], index) => {
             const collapseId = `anomaly-collapse-${index}`;
-            const severity = getSeverity(type);
-            const severityColor = getSeverityColor(type);
+            const severity = getSeverity(type, anomalies[0]);
+            const severityColor = getSeverityColor(type, anomalies[0]);
+            const severityLabel = severity === 'critical' ? '嚴重' : severity === 'high' ? '高風險' : severity.toUpperCase();
             
             return `
                 <div class="card mb-3 border-${severityColor}">
@@ -932,36 +933,46 @@ async function loadAnomalyData() {
                                 </button>
                             </h6>
                             <div>
-                                <span class="badge bg-${severityColor} me-2">${severity.toUpperCase()}</span>
+                                <span class="badge bg-${severityColor} me-2">${severityLabel}</span>
                                 <span class="badge bg-secondary">${anomalies.length} 項</span>
                             </div>
                         </div>
                     </div>
                     <div class="collapse" id="${collapseId}">
                         <div class="card-body">
-                            ${anomalies.map((anomaly, anomalyIndex) => `
-                                <div class="alert alert-${severityColor} alert-dismissible mb-3">
+                            ${anomalies.map((anomaly, anomalyIndex) => {
+                                const aColor = getSeverityColor(anomaly.type, anomaly);
+                                return `
+                                <div class="alert alert-${aColor} alert-dismissible mb-3">
                                     <div class="d-flex justify-content-between align-items-start">
                                         <div class="flex-grow-1">
-                                            <p class="mb-2">${anomaly.description || '偵測到可疑行為'}</p>
+                                            <p class="mb-1 fw-semibold">${anomaly.title || ''}</p>
+                                            <p class="mb-2 small">${anomaly.description || '偵測到可疑行為'}</p>
                                             <div class="row">
                                                 <div class="col-md-6">
                                                     <small class="text-muted">
                                                         <i class="fas fa-map-marker-alt me-1"></i>
-                                                        <strong>來源 IP:</strong> ${anomaly.ip}
+                                                        <strong>來源 IP:</strong> ${anomaly.ip || 'N/A'}
                                                     </small>
                                                 </div>
                                                 <div class="col-md-6">
                                                     <small class="text-muted">
                                                         <i class="fas fa-clock me-1"></i>
-                                                        <strong>時間:</strong> ${new Date(anomaly.time).toLocaleString()}
+                                                        <strong>時間:</strong> ${anomaly.time || ''}
                                                     </small>
                                                 </div>
+                                                ${anomaly.details && anomaly.details.connections ? `
+                                                <div class="col-12 mt-1">
+                                                    <small class="text-muted">
+                                                        <i class="fas fa-network-wired me-1"></i>
+                                                        <strong>連線：</strong>${anomaly.details.connections}
+                                                    </small>
+                                                </div>` : ''}
                                             </div>
                                         </div>
                                         <div class="ms-3">
                                             <button type="button" 
-                                                    class="btn btn-sm btn-outline-${severityColor} anomaly-detail-btn" 
+                                                    class="btn btn-sm btn-outline-${aColor} anomaly-detail-btn" 
                                                     onclick="showAnomalyDetail(${JSON.stringify(anomaly).replace(/"/g, '&quot;')})"
                                                     title="查看詳情">
                                                 <i class="fas fa-eye me-1"></i>詳情
@@ -969,7 +980,8 @@ async function loadAnomalyData() {
                                         </div>
                                     </div>
                                 </div>
-                            `).join('')}
+                                `;
+                            }).join('')}
                         </div>
                     </div>
                 </div>
@@ -1225,50 +1237,44 @@ function getAnomalyIcon(type) {
 
 // 取得異常標題
 function getAnomalyTitle(type) {
-    const titles = {
-        'high_traffic': '大流量連接警示',
-        'protocol_anomaly': '協議異常警示',
-        'geo_anomaly': '地理位置異常',
-        'time_anomaly': '時間異常警示',
-        'suspicious_connection': '可疑連接'
-    };
-    return titles[type] || '異常行為偵測';
+    if (type === 'suricata_alert') return 'Suricata 告警';
+    return '異常行為偵測';
 }
 
 // 取得嚴重程度
-function getSeverity(type) {
-    // 根據異常類型返回嚴重程度
-    const severityMap = {
-        'high_traffic': 'high',
-        'protocol_anomaly': 'medium',
-        'geo_anomaly': 'medium',
-        'time_anomaly': 'low',
-        'suspicious_connection': 'high'
-    };
-    return severityMap[type] || 'medium';
+function getSeverity(type, anomaly) {
+    if (type === 'suricata_alert' && anomaly) {
+        return anomaly.severity === 'critical' ? 'critical' : 'high';
+    }
+    return 'medium';
 }
 
 // 取得嚴重程度顏色
-function getSeverityColor(type) {
-    const severity = getSeverity(type);
+function getSeverityColor(type, anomaly) {
+    const sev = getSeverity(type, anomaly);
     const colorMap = {
-        'high': 'danger',
-        'medium': 'warning',
-        'low': 'info'
+        'critical': 'danger',
+        'high': 'warning',
+        'medium': 'info',
+        'low': 'secondary'
     };
-    return colorMap[severity] || 'warning';
+    return colorMap[sev] || 'warning';
 }
 
 // 顯示異常詳情
 function showAnomalyDetail(anomaly) {
+    const color = getSeverityColor(anomaly.type, anomaly);
+    const sev = getSeverity(anomaly.type, anomaly);
+    const sevLabel = sev === 'critical' ? '嚴重' : sev === 'high' ? '高風險' : sev.toUpperCase();
+    const d = anomaly.details || {};
     // 創建模態框內容
     const modalHtml = `
         <div class="modal fade" id="anomalyDetailModal" tabindex="-1" aria-labelledby="anomalyDetailModalLabel" aria-hidden="true">
             <div class="modal-dialog modal-lg">
                 <div class="modal-content">
-                    <div class="modal-header bg-${getSeverityColor(anomaly.type)}">
+                    <div class="modal-header bg-${color}">
                         <h5 class="modal-title text-white" id="anomalyDetailModalLabel">
-                            <i class="fas fa-${getAnomalyIcon(anomaly.type)} me-2"></i>
+                            <i class="fas fa-shield-alt me-2"></i>
                             ${getAnomalyTitle(anomaly.type)}
                         </h5>
                         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
@@ -1277,17 +1283,15 @@ function showAnomalyDetail(anomaly) {
                         <div class="row mb-3">
                             <div class="col-md-6">
                                 <strong>嚴重程度：</strong>
-                                <span class="badge bg-${getSeverityColor(anomaly.type)} ms-2">
-                                    ${getSeverity(anomaly.type).toUpperCase()}
-                                </span>
+                                <span class="badge bg-${color} ms-2">${sevLabel}</span>
                             </div>
                             <div class="col-md-6">
                                 <strong>偵測時間：</strong>
-                                <span class="text-muted">${new Date(anomaly.time).toLocaleString()}</span>
+                                <span class="text-muted">${anomaly.time || ''}</span>
                             </div>
                         </div>
                         
-                        <div class="alert alert-${getSeverityColor(anomaly.type)} alert-dismissible">
+                        <div class="alert alert-${color}">
                             <h6><i class="fas fa-info-circle me-2"></i>詳細說明</h6>
                             <p class="mb-0">${anomaly.description}</p>
                         </div>
@@ -1295,17 +1299,17 @@ function showAnomalyDetail(anomaly) {
                         ${anomaly.ip ? `
                         <div class="row mb-3">
                             <div class="col-12">
-                                <strong>相關 IP 地址：</strong>
+                                <strong>來源 IP：</strong>
                                 <code class="ms-2">${anomaly.ip}</code>
                             </div>
                         </div>
                         ` : ''}
                         
-                        ${anomaly.connection ? `
+                        ${d.connections ? `
                         <div class="row mb-3">
                             <div class="col-12">
-                                <strong>連接資訊：</strong>
-                                <code class="ms-2">${anomaly.connection}</code>
+                                <strong>連線資訊（共 ${d.count} 筆）：</strong>
+                                <code class="ms-2 d-block mt-1">${d.connections}</code>
                             </div>
                         </div>
                         ` : ''}
@@ -1367,11 +1371,16 @@ function showAnomalyDetail(anomaly) {
 // 格式化詳情鍵名
 function formatDetailKey(key) {
     const keyMap = {
+        'sig_id': '規則 ID',
+        'classification': '分類',
+        'priority': '優先級',
+        'proto': '協議',
+        'connections': '連線資訊',
+        'count': '連線筆數',
         'bytes': '流量大小',
         'rank': '排名',
         'percentage': '百分比',
         'protocol': '協議',
-        'count': '事件數量',
         'country': '國家/地區',
         'time_period': '時間區間',
         'hour': '小時'
@@ -1393,63 +1402,33 @@ function formatDetailValue(key, value) {
 
 // 取得建議處理方式
 function getRecommendations(type) {
-    const recommendations = {
-        'high_traffic': `
-            <ol>
-                <li>檢查連接的目標 IP 是否為已知的合法服務</li>
-                <li>分析流量內容是否包含敏感資料</li>
-                <li>確認是否為預期的大檔案傳輸</li>
-                <li>考慮實施流量限制或監控</li>
-            </ol>
-        `,
-        'protocol_anomaly': `
-            <ol>
-                <li>深入分析該協議的使用模式</li>
-                <li>檢查是否有未預期的應用程式在執行</li>
-                <li>確認協議流量的合法性</li>
-                <li>考慮實施協議白名單</li>
-            </ol>
-        `,
-        'geo_anomaly': `
-            <ol>
-                <li>檢查來源 IP 的信譽度</li>
-                <li>確認是否為合法的國際業務需求</li>
-                <li>考慮實施地理位置過濾</li>
-                <li>加強對該地區流量的監控</li>
-            </ol>
-        `,
-        'time_anomaly': `
-            <ol>
-                <li>檢查深夜時段的系統使用者</li>
-                <li>確認是否為排程的系統維護或備份</li>
-                <li>分析異常時段的活動類型</li>
-                <li>考慮實施時間基礎的存取控制</li>
-            </ol>
-        `,
-        'suspicious_connection': `
-            <ol>
-                <li>立即隔離相關系統進行詳細檢查</li>
-                <li>分析連接的具體內容和目的</li>
-                <li>檢查是否有其他相似的可疑活動</li>
-                <li>更新安全策略和監控規則</li>
-            </ol>
-        `
-    };
-    return recommendations[type] || '請聯繫資安團隊進行進一步分析。';
+    return `
+        <ol>
+            <li>檢查相關 IP 是否為已知惡意標的，可比對威脅情報資料庫</li>
+            <li>分析連線內容，確認是否為真正攻擊行為或誤報</li>
+            <li>若為真實威脅，立即隔離相關系統並進行事件回應</li>
+            <li>更新 Suricata 規則以涵蓋最新威脅簽章</li>
+        </ol>
+    `;
 }
 
 // 複製異常資訊
 function copyAnomalyInfo(anomalyJson) {
     try {
         const anomaly = JSON.parse(anomalyJson);
-        const text = `
-異常類型：${getAnomalyTitle(anomaly.type)}
-嚴重程度：${getSeverity(anomaly.type).toUpperCase()}
-偵測時間：${new Date(anomaly.time).toLocaleString()}
-描述：${anomaly.description}
-${anomaly.ip ? `相關 IP：${anomaly.ip}` : ''}
-${anomaly.connection ? `連接資訊：${anomaly.connection}` : ''}
-        `.trim();
+        const sev = getSeverity(anomaly.type, anomaly);
+        const sevLabel = sev === 'critical' ? '嚴重' : sev === 'high' ? '高風險' : sev.toUpperCase();
+        const d = anomaly.details || {};
+        const text = [
+            `告警名稱：${anomaly.title || ''}`,
+            `嚴重程度：${sevLabel}`,
+            `偵測時間：${anomaly.time || ''}`,
+            `說明：${anomaly.description}`,
+            anomaly.ip ? `來源 IP：${anomaly.ip}` : '',
+            d.connections ? `連線（共 ${d.count} 筆）：${d.connections}` : '',
+            d.classification ? `分類：${d.classification}` : '',
+            d.proto ? `協議：${d.proto}` : '',
+        ].filter(Boolean).join('\n');
         
         navigator.clipboard.writeText(text).then(() => {
             alert('異常資訊已複製到剪貼簿');
