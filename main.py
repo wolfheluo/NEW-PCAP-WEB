@@ -36,11 +36,11 @@ app = Flask(__name__)
 app.secret_key = 'suricata_pcap_analyzer_secret_key_2025'
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
-PROJECT_DIR = "project"
+PROJECT_DIR = "project"  # 預設值，可由 settings.json 覆寫
 SURICATA_EXE = r"C:\Program Files\Suricata\suricata.exe"
-TSHARK_EXE = r"C:\Program Files\Wireshark\tshark.exe"
-DUMPCAP_EXE = r"C:\Program Files\Wireshark\dumpcap.exe"
-GEOIP_DB = "GeoLite2-City.mmdb"
+TSHARK_EXE   = r"C:\Program Files\Wireshark\tshark.exe"
+DUMPCAP_EXE  = r"C:\Program Files\Wireshark\dumpcap.exe"
+GEOIP_DB     = "GeoLite2-City.mmdb"
 SETTING_FILE = "settings.json"
 PCAP_SPLIT_SIZE_KB = 204800  # 預設 200 MB，可由 settings.json 覆寫
 
@@ -66,6 +66,10 @@ def _save_settings(data: dict):
 _cfg = _load_settings()
 if 'pcap_split_mb' in _cfg:
     PCAP_SPLIT_SIZE_KB = int(_cfg['pcap_split_mb']) * 1024
+if 'project_dir' in _cfg and _cfg['project_dir'].strip():
+    PROJECT_DIR = _cfg['project_dir'].strip()
+
+os.makedirs(PROJECT_DIR, exist_ok=True)
 
 # 全局側錄狀態
 # { project_name: { process, status, packet_count, started_at, filter_ips, analyzing } }
@@ -924,23 +928,45 @@ def _get_suricata_rules():
 def api_settings_get_config():
     cfg = _load_settings()
     return jsonify({
-        'pcap_split_mb': cfg.get('pcap_split_mb', PCAP_SPLIT_SIZE_KB // 1024)
+        'pcap_split_mb': cfg.get('pcap_split_mb', PCAP_SPLIT_SIZE_KB // 1024),
+        'project_dir':   cfg.get('project_dir', ''),
     })
 
 
 @app.route('/api/settings/config', methods=['POST'])
 def api_settings_save_config():
-    global PCAP_SPLIT_SIZE_KB
+    global PCAP_SPLIT_SIZE_KB, PROJECT_DIR
     data = request.get_json(force=True)
+    save = {}
+
+    # PCAP 分割大小
     try:
-        mb = int(data.get('pcap_split_mb', 200))
+        mb = int(data.get('pcap_split_mb', PCAP_SPLIT_SIZE_KB // 1024))
         if mb < 10 or mb > 10240:
             return jsonify({'ok': False, 'error': '請輸入 10 ~ 10240 MB 之間的數值'}), 400
         PCAP_SPLIT_SIZE_KB = mb * 1024
-        _save_settings({'pcap_split_mb': mb})
-        return jsonify({'ok': True, 'pcap_split_mb': mb})
+        save['pcap_split_mb'] = mb
     except (ValueError, TypeError):
         return jsonify({'ok': False, 'error': '無效的數值'}), 400
+
+    # project 資料夾路徑
+    project_dir_input = data.get('project_dir', '').strip()
+    if project_dir_input:
+        # 安全性：不允許包含 .. 以防目錄穿越
+        if '..' in project_dir_input:
+            return jsonify({'ok': False, 'error': '路徑不可包含 ..'}), 400
+        try:
+            os.makedirs(project_dir_input, exist_ok=True)
+        except Exception as e:
+            return jsonify({'ok': False, 'error': f'無法建立資料夾：{e}'}), 400
+        PROJECT_DIR = project_dir_input
+    else:
+        PROJECT_DIR = 'project'
+        os.makedirs(PROJECT_DIR, exist_ok=True)
+    save['project_dir'] = project_dir_input
+
+    _save_settings(save)
+    return jsonify({'ok': True, 'pcap_split_mb': save['pcap_split_mb'], 'project_dir': PROJECT_DIR})
 
 
 @app.route('/api/settings/check')

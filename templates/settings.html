@@ -50,24 +50,37 @@
         <i class="fas fa-sliders-h me-1"></i>一般設定
     </div>
     <div class="card-body">
-        <div class="row align-items-end g-3">
-            <div class="col-md-4">
-                <label for="input-pcap-mb" class="form-label fw-semibold">
-                    每個 PCAP 檔案上限 (MB)
-                </label>
-                <input type="number" id="input-pcap-mb" class="form-control"
-                       min="10" max="10240" step="10" value="200"
-                       placeholder="例：200">
-                <div class="form-text">側錄時每個 .pcap 檔案的最大大小，範圍 10 ~ 10240 MB</div>
+        <div class="row g-4">
+
+            <!-- PCAP 分割大小 -->
+            <div class="col-md-6">
+                <div class="p-3 border rounded h-100">
+                    <div class="fw-semibold mb-1">每個 PCAP 檔案上限 (MB)</div>
+                    <div class="text-muted small mb-3">側錄時每個 .pcap 檔案的最大大小，範圍 10 ~ 10240 MB</div>
+                    <input type="number" id="input-pcap-mb" class="form-control"
+                           min="10" max="10240" step="10" value="200"
+                           placeholder="例：200">
+                </div>
             </div>
-            <div class="col-auto">
-                <button id="btn-save-config" class="btn btn-primary">
-                    <i class="fas fa-save me-1"></i>儲存設定
-                </button>
+
+            <!-- Project 資料夾路徑 -->
+            <div class="col-md-6">
+                <div class="p-3 border rounded h-100">
+                    <div class="fw-semibold mb-1">Project 資料夾路徑</div>
+                    <div class="text-muted small mb-3">指定儲存側錄資料的根目錄，支援絕對或相對路徑。留空則使用預設 <code>./project</code></div>
+                    <input type="text" id="input-project-dir" class="form-control font-monospace"
+                           placeholder="留空則使用預設（./project）">
+                </div>
             </div>
-            <div class="col-auto">
-                <span id="config-save-msg" class="text-muted small"></span>
-            </div>
+
+        </div>
+
+        <!-- 儲存按鈕 -->
+        <div class="d-flex justify-content-end align-items-center gap-3 mt-3">
+            <span id="config-save-msg" class="text-muted small"></span>
+            <button id="btn-save-config" class="btn btn-primary">
+                <i class="fas fa-save me-1"></i>儲存設定
+            </button>
         </div>
     </div>
 </div>
@@ -141,11 +154,13 @@ fetch('/api/settings/config')
         if (d.pcap_split_mb) {
             document.getElementById('input-pcap-mb').value = d.pcap_split_mb;
         }
+        document.getElementById('input-project-dir').value = d.project_dir || '';
     });
 
 // ── 儲存設定 ──────────────────────────────────────
 document.getElementById('btn-save-config').addEventListener('click', function () {
     const mb = parseInt(document.getElementById('input-pcap-mb').value, 10);
+    const projectDir = document.getElementById('input-project-dir').value.trim();
     const msgEl = document.getElementById('config-save-msg');
     if (!mb || mb < 10 || mb > 10240) {
         msgEl.textContent = '⚠ 請輸入 10 ~ 10240 MB 之間的數值';
@@ -156,12 +171,13 @@ document.getElementById('btn-save-config').addEventListener('click', function ()
     fetch('/api/settings/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pcap_split_mb: mb })
+        body: JSON.stringify({ pcap_split_mb: mb, project_dir: projectDir })
     })
     .then(r => r.json())
     .then(d => {
         if (d.ok) {
-            msgEl.textContent = `✔ 已儲存（${d.pcap_split_mb} MB）`;
+            const dirMsg = d.project_dir ? `「${d.project_dir}」` : '預設路徑';
+            msgEl.textContent = `✔ 已儲存（${d.pcap_split_mb} MB，${dirMsg}）`;
             msgEl.className = 'text-success fw-semibold small';
         } else {
             msgEl.textContent = '✘ ' + (d.error || '儲存失敗');
