@@ -59,12 +59,12 @@
                     <div class="d-flex gap-1 flex-shrink-0">
                         {% if task.capture_status == 'capturing' %}
                             <span class="badge bg-danger">側錄中</span>
-                        {% elif task.capture_status in ['stopped', 'stopping'] %}
+                        {% elif task.capture_status in ['stopped', 'stopping'] and not task.analyzed %}
                             <span class="badge bg-warning text-dark">分析中</span>
                         {% endif %}
                         {% if task.analyzed %}
                             <span class="badge bg-success">已分析</span>
-                        {% else %}
+                        {% elif task.capture_status not in ['capturing', 'stopped', 'stopping'] %}
                             <span class="badge bg-secondary">待側錄</span>
                         {% endif %}
                     </div>

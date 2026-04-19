@@ -15,6 +15,7 @@
     padding: 6px 14px;
 }
 .progress-log {
+    height: 200px;
     max-height: 200px;
     overflow-y: auto;
     background: #1e1e1e;
@@ -23,6 +24,11 @@
     font-size: 0.82rem;
     border-radius: 6px;
     padding: 12px;
+    scroll-behavior: smooth;
+}
+.progress-card-body {
+    max-height: 300px;
+    overflow: hidden;
 }
 .progress-log .log-line { margin-bottom: 2px; }
 .log-suricata { color: #e8a838; }
@@ -159,17 +165,17 @@
 
         <!-- 分析進度 -->
         <div class="card">
-            <div class="card-header">
-                <i class="fas fa-cogs me-2"></i>分析進度
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span><i class="fas fa-cogs me-2"></i>分析進度</span>
                 <span class="badge bg-warning text-dark ms-2 d-none pulse" id="analyzingBadge">分析中</span>
             </div>
-            <div class="card-body pb-2">
+            <div class="card-body pb-2 progress-card-body">
                 <!-- 進度條 -->
-                <div class="progress mb-3" style="height: 8px;" id="progressBar" style="display:none">
+                <div class="progress mb-2" style="height: 8px;" id="progressBar">
                     <div class="progress-bar progress-bar-striped progress-bar-animated"
                          id="progressFill" role="progressbar" style="width:0%"></div>
                 </div>
-                <!-- 日誌 -->
+                <!-- 日誌 (固定高度 + 捲軸) -->
                 <div class="progress-log" id="progressLog">
                     <div class="log-line text-muted">等待側錄開始…</div>
                 </div>
@@ -378,16 +384,24 @@ function setStoppedUI(count) {
     if (count !== null) updateStats({packet_count: count});
 }
 
-function showAnalyzing(show) {
+function showAnalyzing(show, isDone = false) {
     const badge = document.getElementById('analyzingBadge');
-    const card = document.getElementById('captureCard');
+    const card  = document.getElementById('captureCard');
+    const fill  = document.getElementById('progressFill');
     if (show) {
         badge.classList.remove('d-none');
         card.classList.add('analyzing');
-        document.getElementById('progressBar').removeAttribute('style');
+        // 恢復動畫樣式
+        fill.classList.add('progress-bar-striped', 'progress-bar-animated');
+        fill.classList.remove('bg-success', 'bg-danger');
     } else {
         badge.classList.add('d-none');
         card.classList.remove('analyzing');
+        if (isDone) {
+            // 分析完成：移除動畫，改為純綠色
+            fill.classList.remove('progress-bar-striped', 'progress-bar-animated');
+            fill.classList.add('bg-success');
+        }
     }
 }
 
@@ -489,8 +503,8 @@ socket.on('analysis_complete', data => {
 socket.on('all_analysis_done', data => {
     if (data.project !== PROJECT_NAME) return;
     addLog(`所有分析完成！(${data.analyzed}/${data.total})`, 'log-complete');
-    showAnalyzing(false);
     setProgress(100);
+    showAnalyzing(false, true);   // 停止動畫、進度條變綠
     updateAnalyzeCard(data.analyzed, data.total);
 });
 
