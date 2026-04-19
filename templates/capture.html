@@ -104,14 +104,30 @@
             </div>
         </div>
 
-        <!-- 分析完成後的跳轉卡片 -->
-        <div class="card mt-3 border-success d-none" id="doneCard">
-            <div class="card-body text-center py-3">
-                <i class="fas fa-check-circle fa-2x text-success mb-2"></i>
-                <p class="mb-2 fw-semibold">分析完成！</p>
-                <a href="{{ url_for('dashboard', task_name=project_name) }}" class="btn btn-success">
-                    <i class="fas fa-chart-bar me-1"></i>前往分析儀表板
-                </a>
+        <!-- 分析狀態卡片（常駐） -->
+        <div class="card mt-3" id="doneCard">
+            <div class="card-body text-center py-3" id="doneCardBody">
+                <!-- 待分析 (default) -->
+                <div id="statusPending">
+                    <i class="fas fa-hourglass-half fa-2x text-secondary mb-2"></i>
+                    <p class="mb-0 fw-semibold text-secondary">待分析</p>
+                </div>
+                <!-- 分析中 -->
+                <div id="statusAnalyzing" class="d-none">
+                    <i class="fas fa-spinner fa-spin fa-2x text-warning mb-2"></i>
+                    <p class="mb-1 fw-semibold text-warning">分析中…</p>
+                    <span class="badge bg-warning text-dark fs-6" id="analyzeProgress">0 / 0</span>
+                </div>
+                <!-- 已完成 -->
+                <div id="statusDone" class="d-none">
+                    <i class="fas fa-check-circle fa-2x text-success mb-2"></i>
+                    <p class="mb-1 fw-semibold text-success">分析完成
+                        <span class="badge bg-success ms-1 fs-6" id="analyzeProgressDone"></span>
+                    </p>
+                    <a href="{{ url_for('dashboard', task_name=project_name) }}" class="btn btn-success btn-sm">
+                        <i class="fas fa-chart-bar me-1"></i>前往分析儀表板
+                    </a>
+                </div>
             </div>
         </div>
     </div>
@@ -239,6 +255,7 @@ function pollStatus() {
         .then(r => r.json())
         .then(data => {
             updateStats(data);
+            updateAnalyzeCard(data.analyzed_count ?? 0, data.total_pcap_count ?? 0);
             if (data.status === 'capturing') {
                 setCapturingUI(data.packet_count);
                 captureStartTime = data.started_at ? new Date(data.started_at) : new Date();
@@ -250,6 +267,36 @@ function pollStatus() {
                 showAnalyzing(true);
             }
         });
+}
+
+// ─── 分析狀態卡片 ─────────────────────────────
+function updateAnalyzeCard(analyzed, total) {
+    const pending   = document.getElementById('statusPending');
+    const analyzing = document.getElementById('statusAnalyzing');
+    const done      = document.getElementById('statusDone');
+    const card      = document.getElementById('doneCard');
+
+    if (total > 0 && analyzed >= total) {
+        // 全部完成
+        card.className = 'card mt-3 border-success';
+        pending.classList.add('d-none');
+        analyzing.classList.add('d-none');
+        done.classList.remove('d-none');
+        document.getElementById('analyzeProgressDone').textContent = `${analyzed} / ${total}`;
+    } else if (analyzed > 0 || total > 0) {
+        // 部分完成 / 分析中
+        card.className = 'card mt-3 border-warning';
+        pending.classList.add('d-none');
+        analyzing.classList.remove('d-none');
+        done.classList.add('d-none');
+        document.getElementById('analyzeProgress').textContent = `${analyzed} / ${total || '?'}`;
+    } else {
+        // 尚未開始
+        card.className = 'card mt-3 border-secondary';
+        pending.classList.remove('d-none');
+        analyzing.classList.add('d-none');
+        done.classList.add('d-none');
+    }
 }
 
 // ─── 開始側錄 ─────────────────────────────────
@@ -405,10 +452,13 @@ socket.on('capture_stopped', data => {
     if (data.project !== PROJECT_NAME) return;
     setStoppedUI(null);
     stopTimer();
-    // 重新 poll 一次以取得最新總計（含已寫入 pcap_stats.json 的數值）
+    // 重新 poll 以取得最新總計與分析進度
     fetch(`/api/capture/status/${PROJECT_NAME}`)
         .then(r => r.json())
-        .then(d => updateStats(d))
+        .then(d => {
+            updateStats(d);
+            updateAnalyzeCard(d.analyzed_count ?? 0, d.total_pcap_count ?? 0);
+        })
         .catch(() => {});
 });
 
@@ -429,10 +479,19 @@ socket.on('analysis_progress', data => {
 
 socket.on('analysis_complete', data => {
     if (data.project !== PROJECT_NAME) return;
-    addLog('所有分析完成！', 'log-complete');
+    const analyzed = data.analyzed ?? 0;
+    const total    = data.total ?? 0;
+    addLog(`完成分析 (${analyzed}/${total})：${data.file}`, 'log-complete');
+    setProgress(Math.round(analyzed / Math.max(total, 1) * 100));
+    updateAnalyzeCard(analyzed, total);
+});
+
+socket.on('all_analysis_done', data => {
+    if (data.project !== PROJECT_NAME) return;
+    addLog(`所有分析完成！(${data.analyzed}/${data.total})`, 'log-complete');
     showAnalyzing(false);
     setProgress(100);
-    document.getElementById('doneCard').classList.remove('d-none');
+    updateAnalyzeCard(data.analyzed, data.total);
 });
 
 socket.on('analysis_error', data => {

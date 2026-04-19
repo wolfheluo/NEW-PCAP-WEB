@@ -346,8 +346,14 @@ def _analyze_single_pcap(project_name, pcap_file, filter_ips):
         merge_all_results(project_dir, filter_ips)
 
         _emit('complete', 100)
-        socketio.emit('analysis_complete', {'project': project_name, 'file': fname})
-        _append_capture_log(project_name, '所有分析完成！', 'done')
+        pcap_dir_path = get_pcap_dir(project_name)
+        total_pcap = len(glob.glob(os.path.join(pcap_dir_path, '*.pcap')))
+        analyzed = len(glob.glob(os.path.join(project_dir, '*_analysis.json')))
+        socketio.emit('analysis_complete', {
+            'project': project_name, 'file': fname,
+            'analyzed': analyzed, 'total': total_pcap,
+        })
+        _append_capture_log(project_name, f'完成分析 ({analyzed}/{total_pcap})：{fname}', 'done')
 
     except Exception as e:
         socketio.emit('analysis_error', {'project': project_name, 'error': str(e)})
@@ -401,6 +407,19 @@ def _watch_pcap_files(project_name, pcap_dir, filter_ips):
 
         # 側錄停止且所有檔案都已處理，結束監控
         if not is_running and all_pcap and all_pcap <= processed:
+            # 等所有分析執行緒收尾（analyzing 歸零）再宣告完成
+            for _ in range(30):  # 最多等 30 秒
+                with capture_states_lock:
+                    remaining = capture_states.get(project_name, {}).get('analyzing', 0)
+                if remaining == 0:
+                    break
+                time.sleep(1)
+            total_pcap = len(all_pcap)
+            analyzed = len(glob.glob(os.path.join(project_dir, '*_analysis.json')))
+            socketio.emit('all_analysis_done', {
+                'project': project_name,
+                'analyzed': analyzed, 'total': total_pcap,
+            })
             break
         if not is_running and not all_pcap:
             break
@@ -634,10 +653,13 @@ def api_capture_stop():
 @app.route('/api/capture/status/<project_name>')
 def api_capture_status(project_name):
     pcap_dir = get_pcap_dir(project_name)
+    project_dir = get_project_dir(project_name)
     all_pcaps = glob.glob(os.path.join(pcap_dir, '*.pcap'))
     total_pcap_bytes = sum(os.path.getsize(f) for f in all_pcaps if os.path.isfile(f))
     saved_stats = _load_pcap_stats(project_name)
     saved_total_packets = saved_stats.get('total_packets', 0)
+    total_pcap_count = len(all_pcaps)
+    analyzed_count = len(glob.glob(os.path.join(project_dir, '*_analysis.json')))
 
     with capture_states_lock:
         state = capture_states.get(project_name)
@@ -648,6 +670,8 @@ def api_capture_status(project_name):
             'current_bytes': 0,
             'total_pcap_bytes': total_pcap_bytes,
             'total_packets': saved_total_packets,
+            'analyzed_count': analyzed_count,
+            'total_pcap_count': total_pcap_count,
         })
 
     pcap_prefix = state.get('pcap_prefix', '')
@@ -668,6 +692,8 @@ def api_capture_status(project_name):
         'current_bytes': current_bytes,
         'total_pcap_bytes': total_pcap_bytes,
         'total_packets': total_packets,
+        'analyzed_count': analyzed_count,
+        'total_pcap_count': total_pcap_count,
     })
 
 
