@@ -94,7 +94,7 @@ def filter_log_file(input_file, output_file):
         return False
 
 
-def run_suricata_on_pcap(pcap_file, out_dir, suricata_exe=SURICATA_EXE_DEFAULT):
+def run_suricata_on_pcap(pcap_file, out_dir, suricata_exe=SURICATA_EXE_DEFAULT, checksum_offload=False):
     """對單一 PCAP 檔案執行 Suricata 分析"""
     os.makedirs(out_dir, exist_ok=True)
 
@@ -105,11 +105,9 @@ def run_suricata_on_pcap(pcap_file, out_dir, suricata_exe=SURICATA_EXE_DEFAULT):
         suricata_exe,
         "-r", pcap_file,
         "-l", out_dir,
-        # 離線 PCAP 分析：覆寫 HOME_NET/EXTERNAL_NET 為 any，
-        # 避免因 IP 範圍不符合預設 RFC1918 而導致規則全數不匹配
-        "--set", "vars.address-groups.HOME_NET=any",
-        "--set", "vars.address-groups.EXTERNAL_NET=any",
     ]
+    if checksum_offload:
+        cmd += ["-k", "none"]
     result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8')
 
     if result.returncode != 0:

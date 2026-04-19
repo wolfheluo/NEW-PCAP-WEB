@@ -3,3 +3,9 @@ tshark -r .\114_srsch_00015_20250730135356.pcap -Y "frame.number == 679070" -x
 
 
 tshark -r .\114_srsch_00015_20250730135356.pcap -Y "frame.number == 679070" -T fields -e http.file_data | xxd -r -p
+
+
+
+yaml
+25行  EXTERNAL_NET: 改 "any"
+rules 要啟用

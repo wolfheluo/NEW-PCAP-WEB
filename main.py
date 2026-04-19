@@ -42,7 +42,8 @@ TSHARK_EXE   = r"C:\Program Files\Wireshark\tshark.exe"
 DUMPCAP_EXE  = r"C:\Program Files\Wireshark\dumpcap.exe"
 GEOIP_DB     = "GeoLite2-City.mmdb"
 SETTING_FILE = "settings.json"
-PCAP_SPLIT_SIZE_KB = 204800  # 預設 200 MB，可由 settings.json 覆寫
+PCAP_SPLIT_SIZE_KB = 204800  # 預設 200 MB
+CHECKSUM_OFFLOAD   = False   # NIC Checksum Offload，啟用則加 -k none
 
 os.makedirs(PROJECT_DIR, exist_ok=True)
 
@@ -68,6 +69,8 @@ if 'pcap_split_mb' in _cfg:
     PCAP_SPLIT_SIZE_KB = int(_cfg['pcap_split_mb']) * 1024
 if 'project_dir' in _cfg and _cfg['project_dir'].strip():
     PROJECT_DIR = _cfg['project_dir'].strip()
+if 'checksum_offload' in _cfg:
+    CHECKSUM_OFFLOAD = bool(_cfg['checksum_offload'])
 
 os.makedirs(PROJECT_DIR, exist_ok=True)
 
@@ -359,7 +362,7 @@ def _analyze_single_pcap(project_name, pcap_file, filter_ips):
     try:
         _emit('suricata', 10)
         suricata_out = os.path.join(project_dir, "suricata", pcap_stem)
-        run_suricata_on_pcap(pcap_file, suricata_out, SURICATA_EXE)
+        run_suricata_on_pcap(pcap_file, suricata_out, SURICATA_EXE, checksum_offload=CHECKSUM_OFFLOAD)
 
         _emit('tshark', 50)
         run_tshark_on_pcap(pcap_file, project_dir, TSHARK_EXE, GEOIP_DB, filter_ips)
@@ -945,14 +948,15 @@ def _get_suricata_rules():
 def api_settings_get_config():
     cfg = _load_settings()
     return jsonify({
-        'pcap_split_mb': cfg.get('pcap_split_mb', PCAP_SPLIT_SIZE_KB // 1024),
-        'project_dir':   cfg.get('project_dir', ''),
+        'pcap_split_mb':    cfg.get('pcap_split_mb', PCAP_SPLIT_SIZE_KB // 1024),
+        'project_dir':      cfg.get('project_dir', ''),
+        'checksum_offload': cfg.get('checksum_offload', False),
     })
 
 
 @app.route('/api/settings/config', methods=['POST'])
 def api_settings_save_config():
-    global PCAP_SPLIT_SIZE_KB, PROJECT_DIR
+    global PCAP_SPLIT_SIZE_KB, PROJECT_DIR, CHECKSUM_OFFLOAD
     data = request.get_json(force=True)
     save = {}
 
@@ -982,8 +986,12 @@ def api_settings_save_config():
         os.makedirs(PROJECT_DIR, exist_ok=True)
     save['project_dir'] = project_dir_input
 
+    # checksum offload
+    CHECKSUM_OFFLOAD = bool(data.get('checksum_offload', False))
+    save['checksum_offload'] = CHECKSUM_OFFLOAD
+
     _save_settings(save)
-    return jsonify({'ok': True, 'pcap_split_mb': save['pcap_split_mb'], 'project_dir': PROJECT_DIR})
+    return jsonify({'ok': True, 'pcap_split_mb': save['pcap_split_mb'], 'project_dir': PROJECT_DIR, 'checksum_offload': CHECKSUM_OFFLOAD})
 
 
 @app.route('/api/settings/check')
