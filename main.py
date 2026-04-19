@@ -461,6 +461,73 @@ def _watch_pcap_files(project_name, pcap_dir, filter_ips):
 # 頁面路由
 # ─────────────────────────────────────────────
 
+@app.route('/api/capture/reanalyze/<project_name>', methods=['POST'])
+def api_reanalyze(project_name):
+    """刪除現有分析結果並重新分析所有 PCAP"""
+    project_dir = get_project_dir(project_name)
+    pcap_dir    = get_pcap_dir(project_name)
+
+    # 確認專案存在
+    if not os.path.isdir(project_dir):
+        return jsonify({'error': '專案不存在'}), 404
+
+    # 確認沒有側錄或分析正在進行
+    with capture_states_lock:
+        state = capture_states.get(project_name, {})
+    if state.get('status') == 'capturing':
+        return jsonify({'error': '側錄進行中，請先停止側錄'}), 400
+    if state.get('analyzing', 0) > 0:
+        return jsonify({'error': '分析進行中，請稍後再試'}), 400
+
+    all_pcaps = sorted(glob.glob(os.path.join(pcap_dir, '*.pcap')))
+    if not all_pcaps:
+        return jsonify({'error': '沒有找到 PCAP 檔案'}), 400
+
+    # 清除舊的分析結果
+    import shutil
+    for f in glob.glob(os.path.join(project_dir, '*_analysis.json')):
+        os.remove(f)
+    for f in glob.glob(os.path.join(project_dir, '*.log')):
+        os.remove(f)
+    suricata_dir = os.path.join(project_dir, 'suricata')
+    if os.path.isdir(suricata_dir):
+        shutil.rmtree(suricata_dir)
+    # 清除 summary
+    for f in glob.glob(os.path.join(project_dir, '*.json')):
+        os.remove(f)
+
+    filter_ips = state.get('filter_ips', [])
+
+    # 重置分析計數並啟動分析執行緒
+    with capture_states_lock:
+        if project_name not in capture_states:
+            capture_states[project_name] = {'status': 'stopped', 'packet_count': 0, 'analyzing': 0}
+        capture_states[project_name]['analyzing'] = 0
+
+    def _run_all():
+        for pcap_file in all_pcaps:
+            threading.Thread(
+                target=_analyze_single_pcap,
+                args=(project_name, pcap_file, filter_ips),
+                daemon=True
+            ).start()
+        # 等所有分析完成後發送 all_analysis_done
+        for _ in range(300):
+            with capture_states_lock:
+                remaining = capture_states.get(project_name, {}).get('analyzing', 0)
+            if remaining == 0:
+                break
+            time.sleep(1)
+        total = len(all_pcaps)
+        analyzed = len(glob.glob(os.path.join(project_dir, '*_analysis.json')))
+        socketio.emit('all_analysis_done', {
+            'project': project_name,
+            'analyzed': analyzed, 'total': total,
+        })
+
+    threading.Thread(target=_run_all, daemon=True).start()
+    return jsonify({'ok': True, 'total': len(all_pcaps)})
+
 @app.route('/')
 def index():
     tasks = get_tasks()

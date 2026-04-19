@@ -100,9 +100,15 @@
                 <li class="breadcrumb-item active">{{ project_name }}</li>
             </ol>
         </nav>
-        <h2>
-            <span class="capture-led me-2" id="pageLed"></span>封包側錄 — {{ project_name }}
-        </h2>
+        <div class="d-flex justify-content-between align-items-center">
+            <h2 class="mb-0">
+                <span class="capture-led me-2" id="pageLed"></span>封包側錄 — {{ project_name }}
+            </h2>
+            <button class="btn btn-outline-warning btn-sm" id="btnReanalyze"
+                    onclick="reanalyzeAll()" style="display:none">
+                <i class="fas fa-redo me-1"></i>重新分析
+            </button>
+        </div>
     </div>
 </div>
 
@@ -374,6 +380,7 @@ function updateAnalyzeCard(analyzed, total) {
             analyzing.classList.add('d-none');
             done.classList.remove('d-none');
             document.getElementById('analyzeProgressDone').textContent = `${analyzed} / ${total}`;
+            document.getElementById('btnReanalyze').style.display = '';
         }
     } else if (total > 0) {
         // 有未分析的 PCAP → 橘色「分析中 N/M」
@@ -640,6 +647,29 @@ socket.on('analysis_error', data => {
     addLog('分析發生錯誤：' + data.error, 'log-error');
     showAnalyzing(false);
 });
+
+// ─── 重新分析 ───────────────────────────────
+function reanalyzeAll() {
+    if (!confirm('確定重新分析所有 PCAP？現有分析結果將會被清除。')) return;
+    fetch(`/api/capture/reanalyze/${PROJECT_NAME}`, { method: 'POST' })
+        .then(r => r.json())
+        .then(d => {
+            if (!d.ok) { alert('錯誤：' + (d.error || '重新分析失敗')); return; }
+            // 重置 UI
+            setProgress(0);
+            const fill = document.getElementById('progressFill');
+            fill.classList.add('progress-bar-striped', 'progress-bar-animated');
+            fill.classList.remove('bg-success');
+            currentAnalyzedCount = 0;
+            currentPcapCount = d.total;
+            updateAnalyzeCard(0, d.total);
+            showAnalyzing(true);
+            document.getElementById('btnReanalyze').style.display = 'none';
+            document.getElementById('progressLog').innerHTML = '';
+            addLog(`開始重新分析，共 ${d.total} 個 PCAP…`, 'text-info');
+        })
+        .catch(() => alert('請求失敗'));
+}
 
 
 </script>
