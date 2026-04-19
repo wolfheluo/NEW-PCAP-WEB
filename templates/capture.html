@@ -162,8 +162,38 @@ let timerInterval = null;
 // ─── 初始化 ───────────────────────────────────
 document.addEventListener('DOMContentLoaded', function () {
     loadInterfaces();
+    loadSavedLog();
     pollStatus();
 });
+
+// ─── 載入已儲存的進度記錄 ─────────────────────
+function loadSavedLog() {
+    fetch(`/api/capture/log/${PROJECT_NAME}`)
+        .then(r => r.json())
+        .then(entries => {
+            if (!entries.length) return;
+            const log = document.getElementById('progressLog');
+            log.innerHTML = '';  // 清除預設提示
+            const stageClass = {
+                'start':    'text-info',
+                'stop':     'text-warning',
+                'suricata': 'log-suricata',
+                'tshark':   'log-tshark',
+                'merging':  'log-merging',
+                'complete': 'log-complete',
+                'done':     'log-complete',
+                'error':    'log-error',
+            };
+            entries.forEach(e => {
+                const line = document.createElement('div');
+                line.className = 'log-line ' + (stageClass[e.stage] || '');
+                line.textContent = `[${e.time}] ${e.msg}`;
+                log.appendChild(line);
+            });
+            log.scrollTop = log.scrollHeight;
+        })
+        .catch(() => {});
+}
 
 // ─── 載入網卡清單 ─────────────────────────────
 function loadInterfaces() {
@@ -235,7 +265,7 @@ function startCapture() {
         captureStartTime = new Date();
         setCapturingUI(0);
         startTimer();
-        addLog('開始側錄，每 200 MB 自動切割一個 PCAP 檔案', 'text-info');
+        addLog(`開始側錄，每 ${data.split_mb ?? 200} MB 自動切割一個 PCAP 檔案`, 'text-info');
     })
     .catch(e => alert('請求失敗：' + e));
 }
@@ -325,7 +355,7 @@ function addLog(msg, cssClass = '') {
     const log = document.getElementById('progressLog');
     const line = document.createElement('div');
     line.className = 'log-line ' + cssClass;
-    const now = new Date().toLocaleTimeString();
+    const now = new Date().toLocaleTimeString('zh-TW', {hour12: false});
     line.textContent = `[${now}] ${msg}`;
     log.appendChild(line);
     log.scrollTop = log.scrollHeight;

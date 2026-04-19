@@ -252,6 +252,21 @@ def _poll_packet_count(project_name, pcap_dir):
                         socketio.emit('packet_count', {'project': project_name, 'count': total})
 
 
+def _append_capture_log(project_name: str, msg: str, stage: str = ''):
+    """將分析進度附加寫入 project/<name>/capture.log（JSON Lines 格式）"""
+    try:
+        log_path = os.path.join(get_project_dir(project_name), 'capture.log')
+        entry = json.dumps({
+            'time': datetime.now().strftime('%H:%M:%S'),
+            'stage': stage,
+            'msg': msg,
+        }, ensure_ascii=False)
+        with open(log_path, 'a', encoding='utf-8') as f:
+            f.write(entry + '\n')
+    except Exception:
+        pass
+
+
 def _analyze_single_pcap(project_name, pcap_file, filter_ips):
     """對單一 PCAP 執行 Suricata + TShark 分析並推送進度"""
     project_dir = get_project_dir(project_name)
@@ -267,6 +282,13 @@ def _analyze_single_pcap(project_name, pcap_file, filter_ips):
             'project': project_name, 'stage': stage,
             'file': fname, 'percent': percent
         })
+        stage_msg = {
+            'suricata': f'Suricata 分析中：{fname}',
+            'tshark':   f'TShark 統計中：{fname}',
+            'merging':  f'合併分析結果：{fname}',
+            'complete': f'完成：{fname}',
+        }.get(stage, f'{stage}: {fname}')
+        _append_capture_log(project_name, stage_msg, stage)
 
     try:
         _emit('suricata', 10)
@@ -282,9 +304,11 @@ def _analyze_single_pcap(project_name, pcap_file, filter_ips):
 
         _emit('complete', 100)
         socketio.emit('analysis_complete', {'project': project_name, 'file': fname})
+        _append_capture_log(project_name, '所有分析完成！', 'done')
 
     except Exception as e:
         socketio.emit('analysis_error', {'project': project_name, 'error': str(e)})
+        _append_capture_log(project_name, f'分析發生錯誤：{e}', 'error')
     finally:
         with capture_states_lock:
             if project_name in capture_states:
@@ -512,7 +536,10 @@ def api_capture_start():
     threading.Thread(target=_poll_packet_count, args=(project_name, pcap_dir), daemon=True).start()
     threading.Thread(target=_watch_pcap_files, args=(project_name, pcap_dir, filter_ips), daemon=True).start()
 
-    return jsonify({'status': 'started', 'project': project_name})
+    split_mb = PCAP_SPLIT_SIZE_KB // 1024
+    _append_capture_log(project_name, f'開始側錄（介面 {iface_index}），每 {split_mb} MB 自動切割', 'start')
+
+    return jsonify({'status': 'started', 'project': project_name, 'split_mb': split_mb})
 
 
 @app.route('/api/capture/stop', methods=['POST'])
@@ -549,6 +576,7 @@ def api_capture_stop():
         if project_name in capture_states:
             capture_states[project_name]['status'] = 'stopped'
 
+    _append_capture_log(project_name, '側錄已停止，正在排入分析佇列…', 'stop')
     socketio.emit('capture_stopped', {'project': project_name})
     return jsonify({'status': 'stopped'})
 
@@ -565,6 +593,26 @@ def api_capture_status(project_name):
         'started_at': state.get('started_at', ''),
         'analyzing': state.get('analyzing', 0),
     })
+
+
+@app.route('/api/capture/log/<project_name>')
+def api_capture_log(project_name):
+    """讀取專案的 capture.log，回傳 JSON Lines 解析後的陣列"""
+    log_path = os.path.join(get_project_dir(project_name), 'capture.log')
+    entries = []
+    if os.path.exists(log_path):
+        try:
+            with open(log_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        try:
+                            entries.append(json.loads(line))
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+    return jsonify(entries)
 
 
 # ─────────────────────────────────────────────
