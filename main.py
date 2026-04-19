@@ -41,9 +41,31 @@ SURICATA_EXE = r"C:\Program Files\Suricata\suricata.exe"
 TSHARK_EXE = r"C:\Program Files\Wireshark\tshark.exe"
 DUMPCAP_EXE = r"C:\Program Files\Wireshark\dumpcap.exe"
 GEOIP_DB = "GeoLite2-City.mmdb"
-PCAP_SPLIT_SIZE_KB = 204800  # 200 MB
+SETTING_FILE = "setting.json"
+PCAP_SPLIT_SIZE_KB = 204800  # 預設 200 MB，可由 setting.json 覆寫
 
 os.makedirs(PROJECT_DIR, exist_ok=True)
+
+# ── 讀取 / 寫入 setting.json ──────────────────────────────
+def _load_settings() -> dict:
+    if os.path.exists(SETTING_FILE):
+        try:
+            with open(SETTING_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+def _save_settings(data: dict):
+    existing = _load_settings()
+    existing.update(data)
+    with open(SETTING_FILE, 'w', encoding='utf-8') as f:
+        json.dump(existing, f, ensure_ascii=False, indent=2)
+
+# 套用已儲存的設定
+_cfg = _load_settings()
+if 'pcap_split_mb' in _cfg:
+    PCAP_SPLIT_SIZE_KB = int(_cfg['pcap_split_mb']) * 1024
 
 # 全局側錄狀態
 # { project_name: { process, status, packet_count, started_at, filter_ips, analyzing } }
@@ -730,6 +752,29 @@ def _get_suricata_rules():
             if fname.endswith('.rules'):
                 rules_list.append(fname)
     return rules_list
+
+
+@app.route('/api/settings/config', methods=['GET'])
+def api_settings_get_config():
+    cfg = _load_settings()
+    return jsonify({
+        'pcap_split_mb': cfg.get('pcap_split_mb', PCAP_SPLIT_SIZE_KB // 1024)
+    })
+
+
+@app.route('/api/settings/config', methods=['POST'])
+def api_settings_save_config():
+    global PCAP_SPLIT_SIZE_KB
+    data = request.get_json(force=True)
+    try:
+        mb = int(data.get('pcap_split_mb', 200))
+        if mb < 10 or mb > 10240:
+            return jsonify({'ok': False, 'error': '請輸入 10 ~ 10240 MB 之間的數值'}), 400
+        PCAP_SPLIT_SIZE_KB = mb * 1024
+        _save_settings({'pcap_split_mb': mb})
+        return jsonify({'ok': True, 'pcap_split_mb': mb})
+    except (ValueError, TypeError):
+        return jsonify({'ok': False, 'error': '無效的數值'}), 400
 
 
 @app.route('/api/settings/check')
