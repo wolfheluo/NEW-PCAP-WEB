@@ -170,35 +170,37 @@ function renderCheckResults(data) {
 
 // ── 下載進度處理 ──────────────────────────────────
 socket.on('download_progress', function (data) {
-    const target = data.target;   // 'geolite' or 'rules'
-    const prefix = target === 'geolite' ? 'geolite' : 'rules';
+    if (!data || !data.target) return;
+    const prefix = data.target === 'geolite' ? 'geolite' : 'rules';
 
     const statusDiv = document.getElementById(prefix + '-status');
-    const bar = document.getElementById(prefix + '-bar');
-    const msg = document.getElementById(prefix + '-msg');
-    const btn = document.getElementById('btn-' + prefix);
+    const bar       = document.getElementById(prefix + '-bar');
+    const msg       = document.getElementById(prefix + '-msg');
+    const btn       = document.getElementById('btn-' + prefix);
 
+    if (!statusDiv || !bar || !msg) return;
     statusDiv.classList.remove('d-none');
 
     if (data.status === 'start' || data.status === 'downloading') {
-        bar.style.width = data.progress + '%';
+        bar.style.width = (data.progress || 0) + '%';
         msg.textContent = data.message || '下載中...';
         if (btn) btn.disabled = true;
     } else if (data.status === 'done') {
         bar.style.width = '100%';
-        bar.classList.remove('progress-bar-animated', 'progress-bar-striped');
-        bar.classList.add(target === 'rules' ? 'bg-warning' : '');
+        bar.className = 'progress-bar bg-success';
         msg.textContent = '✔ 下載完成';
-        msg.classList.remove('text-muted');
-        msg.classList.add('text-success', 'fw-semibold');
-        if (btn) { btn.disabled = false; }
+        msg.className = 'text-success fw-semibold small';
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-check me-1"></i>完成';
+            btn.className = 'btn btn-success btn-sm';
+        }
     } else if (data.status === 'error') {
-        bar.classList.remove('progress-bar-animated');
-        bar.classList.add('bg-danger');
+        bar.className = 'progress-bar bg-danger';
+        bar.style.width = '100%';
         msg.textContent = '✘ 失敗：' + (data.message || '未知錯誤');
-        msg.classList.remove('text-muted');
-        msg.classList.add('text-danger');
-        if (btn) { btn.disabled = false; }
+        msg.className = 'text-danger small';
+        if (btn) btn.disabled = false;
     }
 });
 
