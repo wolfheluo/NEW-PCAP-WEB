@@ -1,0 +1,1641 @@
+{% extends "base.html" %}
+
+{% block title %}{{ task_name }} - 分析結果{% endblock %}
+
+{% block extra_css %}
+<style>
+.event-card {
+    transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+    min-height: 200px; /* 統一 card 高度 */
+}
+
+.event-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+}
+
+.event-card:active {
+    transform: translateY(-1px);
+}
+
+.event-card .card-body {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: 1rem;
+}
+
+.event-card .card-text {
+    font-weight: 500;
+    font-size: 0.9rem;
+}
+
+/* 確保所有事件卡片有相同高度 */
+.event-card.h-100 {
+    height: 100% !important;
+}
+
+/* TOP IP 詳情區域樣式 */
+#topIpDetailsSection .text-truncate {
+    max-width: 150px;
+}
+
+/* 響應式調整 */
+@media (max-width: 768px) {
+    .event-card {
+        min-height: 160px;
+    }
+    
+    #topIpDetailsSection .text-truncate {
+        max-width: 120px;
+    }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <div>
+                <h2><i class="fas fa-chart-bar me-2"></i>分析結果</h2>
+                <p class="text-muted mb-0">任務：{{ task_name }}</p>
+            </div>
+            <div>
+                <a href="{{ url_for('index') }}" class="btn btn-outline-primary">
+                    <i class="fas fa-arrow-left me-1"></i>返回總覽
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 導航標籤 -->
+<ul class="nav nav-tabs mb-4" id="analysisTab" role="tablist">
+    <li class="nav-item" role="presentation">
+        <button class="nav-link active" id="overview-tab" data-bs-toggle="tab" data-bs-target="#overview" type="button" role="tab">
+            <i class="fas fa-tachometer-alt me-1"></i>總覽
+        </button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="flow-tab" data-bs-toggle="tab" data-bs-target="#flow" type="button" role="tab">
+            <i class="fas fa-chart-line me-1"></i>流量趨勢
+        </button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="topip-tab" data-bs-toggle="tab" data-bs-target="#topip" type="button" role="tab">
+            <i class="fas fa-list-ol me-1"></i>Top IP
+        </button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="geo-tab" data-bs-toggle="tab" data-bs-target="#geo" type="button" role="tab">
+            <i class="fas fa-globe me-1"></i>國別統計
+        </button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="events-tab" data-bs-toggle="tab" data-bs-target="#events" type="button" role="tab">
+            <i class="fas fa-exclamation-triangle me-1"></i>事件分析
+        </button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="anomaly-tab" data-bs-toggle="tab" data-bs-target="#anomaly" type="button" role="tab">
+            <i class="fas fa-shield-alt me-1"></i>異常警示
+        </button>
+    </li>
+</ul>
+
+<!-- 標籤內容 -->
+<div class="tab-content" id="analysisTabContent">
+    <!-- 總覽 -->
+    <div class="tab-pane fade show active" id="overview" role="tabpanel">
+        <div class="row" id="overview-cards">
+            <!-- 統計卡片將由 JavaScript 動態載入 -->
+        </div>
+    </div>
+
+    <!-- 流量趨勢 -->
+    <div class="tab-pane fade" id="flow" role="tabpanel">
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-chart-line me-2"></i>每10分鐘流量統計</h5>
+                        <small class="text-muted">點擊圖表上的數據點以查看該時間段的前5大流量排行</small>
+                    </div>
+                    <div class="card-body">
+                        <div class="chart-container">
+                            <canvas id="flowChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 10分鐘詳細統計展開區域 -->
+        <div class="row mt-3" id="flowDetailsSection" style="display: none;">
+            <div class="col-12">
+                <div class="card border-info">
+                    <div class="card-header bg-info bg-opacity-10">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <h6 class="mb-0">
+                                <i class="fas fa-clock me-2 text-info"></i>
+                                <span id="selectedTimeLabel">選定時間段詳細統計</span>
+                            </h6>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="hideFlowDetails()">
+                                <i class="fas fa-times me-1"></i>關閉
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <div class="card bg-light">
+                                    <div class="card-body text-center">
+                                        <i class="fas fa-database fa-2x text-primary mb-2"></i>
+                                        <h5 id="selectedTimeTotalBytes">-</h5>
+                                        <p class="text-muted mb-0">該時段總流量</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="card bg-light">
+                                    <div class="card-body text-center">
+                                        <i class="fas fa-network-wired fa-2x text-warning mb-2"></i>
+                                        <h5 id="selectedTimeConnectionCount">-</h5>
+                                        <p class="text-muted mb-0">前5大連接</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <h6><i class="fas fa-trophy me-2"></i>前5大流量排行</h6>
+                        <div class="table-responsive">
+                            <table class="table table-striped table-hover">
+                                <thead>
+                                    <tr>
+                                        <th width="80">排名</th>
+                                        <th>連接</th>
+                                        <th width="120">流量</th>
+                                        <th width="100">佔比</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="selectedTimeTopConnections">
+                                    <!-- 詳細連接數據將由 JavaScript 填充 -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Top IP -->
+    <div class="tab-pane fade" id="topip" role="tabpanel">
+        <div class="row">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-chart-bar me-2"></i>流量排行圖</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="chart-container">
+                            <canvas id="topIpChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-list me-2"></i>詳細清單</h5>
+                        <small class="text-muted">點擊任一項目查看高流量時間段</small>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-striped table-hover" id="topIpTable">
+                                <thead>
+                                    <tr>
+                                        <th>#</th>
+                                        <th>連線</th>
+                                        <th>流量</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <!-- 資料將由 JavaScript 動態載入 -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- TOP IP 高流量時間段詳細資訊展開區域 -->
+        <div class="row mt-3" id="topIpDetailsSection" style="display: none;">
+            <div class="col-12">
+                <div class="card border-primary">
+                    <div class="card-header bg-primary bg-opacity-10">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <h6 class="mb-0">
+                                <i class="fas fa-chart-line me-2 text-primary"></i>
+                                <span id="selectedConnectionLabel">連線高流量時間段分析</span>
+                            </h6>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="hideTopIpDetails()">
+                                <i class="fas fa-times me-1"></i>關閉
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="row mb-3">
+                            <div class="col-md-3">
+                                <div class="card bg-light">
+                                    <div class="card-body text-center">
+                                        <i class="fas fa-server fa-2x text-primary mb-2"></i>
+                                        <h6 id="selectedConnectionName" class="text-truncate">-</h6>
+                                        <p class="text-muted mb-0 small">選定連線</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="card bg-light">
+                                    <div class="card-body text-center">
+                                        <i class="fas fa-network-wired fa-2x text-info mb-2"></i>
+                                        <h6 id="selectedConnectionProtocol">-</h6>
+                                        <p class="text-muted mb-0 small">協議類型</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="card bg-light">
+                                    <div class="card-body text-center">
+                                        <i class="fas fa-database fa-2x text-success mb-2"></i>
+                                        <h6 id="selectedConnectionTotalBytes">-</h6>
+                                        <p class="text-muted mb-0 small">總流量</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="card bg-light">
+                                    <div class="card-body text-center">
+                                        <i class="fas fa-clock fa-2x text-warning mb-2"></i>
+                                        <h6 id="selectedConnectionPeriodCount">-</h6>
+                                        <p class="text-muted mb-0 small">高流量時段</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <h6><i class="fas fa-trophy me-2"></i>前三大流量時間段</h6>
+                        <div class="table-responsive">
+                            <table class="table table-striped table-hover">
+                                <thead>
+                                    <tr>
+                                        <th width="80">排名</th>
+                                        <th>時間段</th>
+                                        <th width="120">流量</th>
+                                        <th width="100">佔比</th>
+                                        <th width="120">流量密度</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="selectedConnectionTimePeriods">
+                                    <!-- 詳細時間段數據將由 JavaScript 填充 -->
+                                </tbody>
+                            </table>
+                        </div>
+                        
+                        <div class="alert alert-info mt-3">
+                            <i class="fas fa-info-circle me-2"></i>
+                            <strong>說明：</strong>此表顯示該連線在不同10分鐘時間段內產生的流量統計，可幫助識別流量高峰期和異常活動模式。
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 國別統計 -->
+    <div class="tab-pane fade" id="geo" role="tabpanel">
+        <div class="row">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-chart-pie me-2"></i>國別分布圓餅圖</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="chart-container">
+                            <canvas id="geoChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-flag me-2"></i>國別排名</h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="geoList">
+                            <!-- 國別清單將由 JavaScript 動態載入 -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 事件分析 -->
+    <div class="tab-pane fade" id="events" role="tabpanel">
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-exclamation-triangle me-2"></i>網路事件統計</h5>
+                        <small class="text-muted">點擊任一協議卡片查看詳細統計</small>
+                    </div>
+                    <div class="card-body">
+                        <div class="row" id="eventStats">
+                            <!-- 事件統計將由 JavaScript 動態載入 -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 異常警示 -->
+    <div class="tab-pane fade" id="anomaly" role="tabpanel">
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5><i class="fas fa-shield-alt me-2"></i>異常行為偵測</h5>
+                        <span class="badge bg-danger" id="anomalyCount">0</span>
+                    </div>
+                    <div class="card-body">
+                        <div id="anomalyList">
+                            <!-- 異常清單將由 JavaScript 動態載入 -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+<!-- 載入指示器 -->
+<div id="loadingIndicator" class="text-center py-5" style="display: none;">
+    <div class="spinner-border text-primary" role="status">
+        <span class="visually-hidden">載入中...</span>
+    </div>
+    <p class="mt-2 text-muted">載入分析資料中...</p>
+</div>
+
+<!-- 事件詳細統計模態框 -->
+<div class="modal fade" id="eventDetailsModal" tabindex="-1" aria-labelledby="eventDetailsModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="eventDetailsModalLabel">協議詳細統計</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div id="eventDetailsContent">
+                    <div class="text-center">
+                        <div class="spinner-border" role="status">
+                            <span class="visually-hidden">載入中...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const taskName = '{{ task_name }}';
+let charts = {};
+
+// 載入所有分析資料
+async function loadAllData() {
+    document.getElementById('loadingIndicator').style.display = 'block';
+    
+    try {
+        await Promise.all([
+            loadOverview(),
+            loadFlowData(),
+            loadTopIpData(),
+            loadGeoData(),
+            loadEventData(),
+            loadAnomalyData()
+        ]);
+    } catch (error) {
+        console.error('載入資料失敗:', error);
+        alert('載入分析資料失敗，請重新整理頁面');
+    } finally {
+        document.getElementById('loadingIndicator').style.display = 'none';
+    }
+}
+
+// 載入總覽資料
+async function loadOverview() {
+    const [flowResponse, eventsResponse, anomalyResponse] = await Promise.all([
+        fetch(`/api/flow/${taskName}`),
+        fetch(`/api/events/${taskName}`),
+        fetch(`/api/anomaly/${taskName}`)
+    ]);
+    
+    const flowData = await flowResponse.json();
+    const eventsData = await eventsResponse.json();
+    const anomalyData = await anomalyResponse.json();
+    
+    const totalEvents = Object.values(eventsData).reduce((sum, event) => sum + (event.count || 0), 0);
+    
+    const overviewCards = document.getElementById('overview-cards');
+    overviewCards.innerHTML = `
+        <div class="col-lg-3 col-md-6 mb-4">
+            <div class="card stats-card text-center">
+                <div class="card-body">
+                    <i class="fas fa-database fa-3x text-primary mb-3"></i>
+                    <h4>${formatBytes(flowData.total_bytes || 0)}</h4>
+                    <p class="text-muted mb-0">總流量</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-3 col-md-6 mb-4">
+            <div class="card stats-card text-center">
+                <div class="card-body">
+                    <i class="fas fa-clock fa-3x text-info mb-3"></i>
+                    <h4>${calculateDuration(flowData.start_time, flowData.end_time)}</h4>
+                    <p class="text-muted mb-0">分析時長</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-3 col-md-6 mb-4">
+            <div class="card stats-card text-center">
+                <div class="card-body">
+                    <i class="fas fa-exclamation-triangle fa-3x text-warning mb-3"></i>
+                    <h4>${totalEvents.toLocaleString()}</h4>
+                    <p class="text-muted mb-0">網路事件</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-3 col-md-6 mb-4">
+            <div class="card stats-card text-center">
+                <div class="card-body">
+                    <i class="fas fa-shield-alt fa-3x text-danger mb-3"></i>
+                    <h4>${anomalyData.length}</h4>
+                    <p class="text-muted mb-0">異常警示</p>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// 載入流量資料
+async function loadFlowData() {
+    const response = await fetch(`/api/flow/${taskName}`);
+    const data = await response.json();
+    
+    const ctx = document.getElementById('flowChart').getContext('2d');
+    
+    if (charts.flow) {
+        charts.flow.destroy();
+    }
+    
+    // 使用每10分鐘統計，如果不存在則從每分鐘資料生成
+    let flowData = data.per_10_minutes || {};
+    
+    if (Object.keys(flowData).length === 0 && data.per_minute) {
+        // 從每分鐘資料生成每10分鐘統計
+        flowData = generateTenMinuteStats(data.per_minute, data.start_time, data.end_time);
+    }
+    
+    // 如果仍然沒有資料，則使用每小時統計
+    if (Object.keys(flowData).length === 0 && data.per_hour) {
+        flowData = data.per_hour;
+    }
+    
+    // 生成排序後的時間標籤和對應的數據值
+    const sortedFlowData = getSortedFlowData(flowData, data.start_time, data.end_time);
+    
+    // 儲存時間對應關係，供點擊事件使用
+    window.flowTimeMapping = Object.keys(flowData).sort();
+    window.hasTopIpDetails = data.top_ip_per_10_minutes && Object.keys(data.top_ip_per_10_minutes).length > 0;
+    
+    charts.flow = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: sortedFlowData.labels,
+            datasets: [{
+                label: '流量 (Bytes)',
+                data: sortedFlowData.values,
+                borderColor: 'rgb(75, 192, 192)',
+                backgroundColor: 'rgba(75, 192, 192, 0.1)',
+                tension: 0.4,
+                fill: true,
+                pointRadius: 6,
+                pointHoverRadius: 8,
+                pointBackgroundColor: 'rgb(75, 192, 192)',
+                pointBorderColor: '#fff',
+                pointBorderWidth: 2
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {
+                intersect: false,
+                mode: 'point'
+            },
+            onHover: (event, activeElements) => {
+                event.native.target.style.cursor = activeElements.length > 0 && window.hasTopIpDetails ? 'pointer' : 'default';
+            },
+            onClick: (event, activeElements) => {
+                if (activeElements.length > 0 && window.hasTopIpDetails) {
+                    const dataIndex = activeElements[0].index;
+                    const timeKey = window.flowTimeMapping[dataIndex];
+                    showFlowDetails(timeKey);
+                }
+            },
+            scales: {
+                x: {
+                    ticks: {
+                        maxRotation: 45,
+                        minRotation: 45
+                    }
+                },
+                y: {
+                    beginAtZero: true,
+                    ticks: {
+                        callback: function(value) {
+                            return formatBytes(value);
+                        }
+                    }
+                }
+            },
+            plugins: {
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            const timeKey = window.flowTimeMapping[context.dataIndex];
+                            let tooltipText = '流量: ' + formatBytes(context.parsed.y);
+                            if (window.hasTopIpDetails) {
+                                tooltipText += '\n點擊查看前5大流量排行';
+                            }
+                            return tooltipText;
+                        }
+                    }
+                },
+                legend: {
+                    display: true,
+                    labels: {
+                        generateLabels: function(chart) {
+                            const original = Chart.defaults.plugins.legend.labels.generateLabels;
+                            const labels = original.call(this, chart);
+                            
+                            if (window.hasTopIpDetails) {
+                                labels.push({
+                                    text: '💡 點擊數據點查看詳細排行',
+                                    fontColor: '#666',
+                                    fillStyle: 'transparent',
+                                    strokeStyle: 'transparent',
+                                    pointStyle: 'line'
+                                });
+                            }
+                            
+                            return labels;
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+// 載入 Top IP 資料
+async function loadTopIpData() {
+    const response = await fetch(`/api/top_ip/${taskName}`);
+    const data = await response.json();
+    
+    // 儲存 top IP 資料供詳細展示使用
+    window.topIpData = data;
+    
+    // 圖表
+    const ctx = document.getElementById('topIpChart').getContext('2d');
+    
+    if (charts.topIp) {
+        charts.topIp.destroy();
+    }
+    
+    const top10 = data.slice(0, 10);
+    
+    charts.topIp = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: top10.map(item => item.connection.substring(0, 20) + '...'),
+            datasets: [{
+                label: '流量 (Bytes)',
+                data: top10.map(item => item.bytes),
+                backgroundColor: 'rgba(54, 162, 235, 0.6)',
+                borderColor: 'rgba(54, 162, 235, 1)',
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    ticks: {
+                        callback: function(value) {
+                            return formatBytes(value);
+                        }
+                    }
+                }
+            },
+            plugins: {
+                tooltip: {
+                    callbacks: {
+                        title: function(context) {
+                            return top10[context[0].dataIndex].connection;
+                        },
+                        label: function(context) {
+                            return '流量: ' + formatBytes(context.parsed.y);
+                        }
+                    }
+                }
+            }
+        }
+    });
+    
+    // 表格
+    const tableBody = document.querySelector('#topIpTable tbody');
+    tableBody.innerHTML = data.slice(0, 20).map((item, index) => {
+        return `
+        <tr>
+            <td>${index + 1}</td>
+            <td><code class="text-break">${item.connection}</code></td>
+            <td>${formatBytes(item.bytes)}</td>
+            <td>
+                <button class="btn btn-sm btn-outline-primary" onclick="showTopIpDetails(${index})" title="查看高流量時間段">
+                    <i class="fas fa-chart-line me-1"></i>時間段
+                </button>
+            </td>
+        </tr>
+        `;
+    }).join('');
+}
+
+// 載入國別資料
+async function loadGeoData() {
+    const response = await fetch(`/api/geo/${taskName}`);
+    const data = await response.json();
+    
+    // 將資料轉換為陣列並按計數排序（由多到少）
+    const sortedCountries = Object.entries(data)
+        .sort((a, b) => b[1] - a[1]);
+    
+    // 只取前10名，其餘歸類為"其他"
+    const top10Countries = sortedCountries.slice(0, 10);
+    const othersData = sortedCountries.slice(10);
+    
+    // 計算"其他"的總數
+    const othersTotal = othersData.reduce((sum, [country, count]) => sum + count, 0);
+    
+    // 準備圖表數據
+    let chartCountries = top10Countries.map(([country, count]) => country);
+    let chartCounts = top10Countries.map(([country, count]) => count);
+    
+    // 如果有其他國家，添加到數據中
+    if (othersTotal > 0) {
+        chartCountries.push('其他');
+        chartCounts.push(othersTotal);
+    }
+    
+    // 圓餅圖
+    const ctx = document.getElementById('geoChart').getContext('2d');
+    
+    if (charts.geo) {
+        charts.geo.destroy();
+    }
+    
+    charts.geo = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: chartCountries,
+            datasets: [{
+                data: chartCounts,
+                backgroundColor: [
+                    '#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0',
+                    '#9966FF', '#FF9F40', '#FF8C69', '#20B2AA',
+                    '#9370DB', '#32CD32', '#D3D3D3'  // 最後一個灰色代表"其他"
+                ]
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'bottom'
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            const label = context.label || '';
+                            const value = context.parsed;
+                            const total = context.dataset.data.reduce((sum, val) => sum + val, 0);
+                            const percentage = ((value / total) * 100).toFixed(1);
+                            
+                            if (label === '其他') {
+                                return `其他 (${othersData.length}個國家): ${value.toLocaleString()} (${percentage}%)`;
+                            }
+                            return `${label}: ${value.toLocaleString()} (${percentage}%)`;
+                        }
+                    }
+                }
+            }
+        }
+    });
+    
+    // 國別清單
+    const geoList = document.getElementById('geoList');
+    const total = chartCounts.reduce((sum, count) => sum + count, 0);
+    
+    // 生成前10名的清單
+    let listHtml = top10Countries.map(([country, count], index) => {
+        const percentage = ((count / total) * 100).toFixed(1);
+        return `
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <span><span class="badge bg-secondary me-2">${index + 1}</span><strong>${country}</strong></span>
+                <div>
+                    <span class="badge bg-primary me-2">${count.toLocaleString()}</span>
+                    <span class="text-muted">${percentage}%</span>
+                </div>
+            </div>
+        `;
+    });
+    
+    // 如果有其他國家，添加"其他"項目
+    if (othersTotal > 0) {
+        const othersPercentage = ((othersTotal / total) * 100).toFixed(1);
+        listHtml.push(`
+            <div class="d-flex justify-content-between align-items-center mb-2 border-top pt-2">
+                <span>
+                    <span class="badge bg-light text-dark me-2">其他</span>
+                    <strong>其他 (${othersData.length}個國家)</strong>
+                </span>
+                <div>
+                    <span class="badge bg-secondary me-2">${othersTotal.toLocaleString()}</span>
+                    <span class="text-muted">${othersPercentage}%</span>
+                </div>
+            </div>
+        `);
+        
+        // 添加可展開的其他國家詳細清單
+        if (othersData.length > 0) {
+            listHtml.push(`
+                <div class="mt-2">
+                    <button class="btn btn-sm btn-outline-secondary w-100" type="button" data-bs-toggle="collapse" data-bs-target="#otherCountriesCollapse" aria-expanded="false">
+                        <i class="fas fa-eye me-1"></i>查看其他國家詳情
+                        <i class="fas fa-chevron-down ms-1"></i>
+                    </button>
+                    <div class="collapse mt-2" id="otherCountriesCollapse">
+                        <div class="card card-body bg-light">
+                            <h6 class="mb-2"><i class="fas fa-list me-1"></i>其他國家清單：</h6>
+                            ${othersData.map(([country, count], index) => {
+                                const percentage = ((count / total) * 100).toFixed(1);
+                                return `
+                                    <div class="d-flex justify-content-between align-items-center mb-1 small">
+                                        <span><span class="badge bg-light text-dark me-1">${index + 11}</span>${country}</span>
+                                        <div>
+                                            <span class="badge bg-outline-primary me-1">${count.toLocaleString()}</span>
+                                            <span class="text-muted">${percentage}%</span>
+                                        </div>
+                                    </div>
+                                `;
+                            }).join('')}
+                        </div>
+                    </div>
+                </div>
+            `);
+        }
+    }
+    
+    geoList.innerHTML = listHtml.join('');
+}
+
+// 載入事件資料
+async function loadEventData() {
+    const response = await fetch(`/api/events/${taskName}`);
+    const data = await response.json();
+    
+    const eventStats = document.getElementById('eventStats');
+    eventStats.innerHTML = Object.entries(data).map(([eventType, eventData]) => {
+        // 處理主要來源IP的顯示
+        let topIpDisplay = 'N/A';
+        if (eventData.top_ip) {
+            if (typeof eventData.top_ip === 'string') {
+                // 如果是字串，檢查是否包含多個IP（以逗號或其他分隔符分隔）
+                const ips = eventData.top_ip.split(/[,;|\s]+/).filter(ip => ip.trim().length > 0);
+                if (ips.length > 1) {
+                    // 取前2個IP，每個換行顯示
+                    const displayIps = ips.slice(0, 2);
+                    topIpDisplay = displayIps.map(ip => `<div class="text-truncate">${ip.trim()}</div>`).join('');
+                } else {
+                    topIpDisplay = `<div class="text-truncate">${eventData.top_ip}</div>`;
+                }
+            } else if (Array.isArray(eventData.top_ip)) {
+                // 如果是陣列，取前2個
+                const displayIps = eventData.top_ip.slice(0, 2);
+                topIpDisplay = displayIps.map(ip => `<div class="text-truncate">${ip}</div>`).join('');
+            } else {
+                topIpDisplay = `<div class="text-truncate">${eventData.top_ip}</div>`;
+            }
+        }
+        
+        return `
+        <div class="col-xl-2 col-lg-3 col-md-4 col-sm-6 mb-3">
+            <div class="card text-center event-card h-100" style="cursor: pointer;" onclick="showEventDetails('${eventType}')">
+                <div class="card-body d-flex flex-column">
+                    <i class="fas fa-${getEventIcon(eventType)} fa-2x text-primary mb-2"></i>
+                    <h5 class="mb-2">${eventData.count || 0}</h5>
+                    <p class="card-text mb-2 flex-grow-1">${eventType}</p>
+                    <div class="text-muted mb-2 small">
+                        <div class="mb-1">主要來源:</div>
+                        ${topIpDisplay}
+                    </div>
+                    <div class="mt-auto">
+                        <small class="badge bg-info">點擊查看詳情</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+        `;
+    }).join('');
+}
+
+// 載入異常資料
+async function loadAnomalyData() {
+    const response = await fetch(`/api/anomaly/${taskName}`);
+    const data = await response.json();
+    
+    document.getElementById('anomalyCount').textContent = data.length;
+    
+    const anomalyList = document.getElementById('anomalyList');
+    
+    if (data.length === 0) {
+        anomalyList.innerHTML = `
+            <div class="text-center py-4">
+                <i class="fas fa-check-circle fa-3x text-success mb-3"></i>
+                <h5 class="text-success">未發現異常行為</h5>
+                <p class="text-muted">所有分析的網路流量都在正常範圍內</p>
+            </div>
+        `;
+    } else {
+        // 按異常類型分組
+        const groupedData = data.reduce((groups, anomaly) => {
+            const type = anomaly.type;
+            if (!groups[type]) {
+                groups[type] = [];
+            }
+            groups[type].push(anomaly);
+            return groups;
+        }, {});
+
+        // 生成分組後的 HTML
+        const groupsHtml = Object.entries(groupedData).map(([type, anomalies], index) => {
+            const collapseId = `anomaly-collapse-${index}`;
+            const severity = getSeverity(type);
+            const severityColor = getSeverityColor(type);
+            
+            return `
+                <div class="card mb-3 border-${severityColor}">
+                    <div class="card-header bg-${severityColor} bg-opacity-10 border-${severityColor}">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <h6 class="mb-0">
+                                <button class="btn btn-link text-decoration-none p-0 text-${severityColor} fw-bold" 
+                                        type="button" 
+                                        data-bs-toggle="collapse" 
+                                        data-bs-target="#${collapseId}"
+                                        aria-expanded="false" 
+                                        aria-controls="${collapseId}">
+                                    <i class="fas fa-${getAnomalyIcon(type)} me-2"></i>
+                                    ${getAnomalyTitle(type)}
+                                    <i class="fas fa-chevron-down ms-2 collapse-icon"></i>
+                                </button>
+                            </h6>
+                            <div>
+                                <span class="badge bg-${severityColor} me-2">${severity.toUpperCase()}</span>
+                                <span class="badge bg-secondary">${anomalies.length} 項</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="collapse" id="${collapseId}">
+                        <div class="card-body">
+                            ${anomalies.map((anomaly, anomalyIndex) => `
+                                <div class="alert alert-${severityColor} alert-dismissible mb-3">
+                                    <div class="d-flex justify-content-between align-items-start">
+                                        <div class="flex-grow-1">
+                                            <p class="mb-2">${anomaly.description || '偵測到可疑行為'}</p>
+                                            <div class="row">
+                                                <div class="col-md-6">
+                                                    <small class="text-muted">
+                                                        <i class="fas fa-map-marker-alt me-1"></i>
+                                                        <strong>來源 IP:</strong> ${anomaly.ip}
+                                                    </small>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <small class="text-muted">
+                                                        <i class="fas fa-clock me-1"></i>
+                                                        <strong>時間:</strong> ${new Date(anomaly.time).toLocaleString()}
+                                                    </small>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="ms-3">
+                                            <button type="button" 
+                                                    class="btn btn-sm btn-outline-${severityColor} anomaly-detail-btn" 
+                                                    onclick="showAnomalyDetail(${JSON.stringify(anomaly).replace(/"/g, '&quot;')})"
+                                                    title="查看詳情">
+                                                <i class="fas fa-eye me-1"></i>詳情
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        anomalyList.innerHTML = groupsHtml;
+
+        // 為摺疊按鈕添加圖示切換效果
+        document.querySelectorAll('[data-bs-toggle="collapse"]').forEach(button => {
+            button.addEventListener('click', function() {
+                const icon = this.querySelector('.collapse-icon');
+                const target = document.querySelector(this.getAttribute('data-bs-target'));
+                
+                target.addEventListener('shown.bs.collapse', function () {
+                    icon.classList.remove('fa-chevron-down');
+                    icon.classList.add('fa-chevron-up');
+                });
+                
+                target.addEventListener('hidden.bs.collapse', function () {
+                    icon.classList.remove('fa-chevron-up');
+                    icon.classList.add('fa-chevron-down');
+                });
+            });
+        });
+    }
+}
+
+// 工具函數
+function formatBytes(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+
+function calculateDuration(startTime, endTime) {
+    if (!startTime || !endTime) return 'N/A';
+    const start = new Date(startTime);
+    const end = new Date(endTime);
+    const diffMs = end - start;
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+    const diffMinutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+    return `${diffHours}h ${diffMinutes}m`;
+}
+
+function getEventIcon(eventType) {
+    const icons = {
+    };
+    return icons[eventType] || 'question';
+}
+
+function getAnomalyIcon(type) {
+    const icons = {
+    };
+    return icons[type] || 'exclamation-circle';
+}
+
+// 顯示事件詳細統計
+async function showEventDetails(protocol) {
+    const modal = new bootstrap.Modal(document.getElementById('eventDetailsModal'));
+    const modalTitle = document.getElementById('eventDetailsModalLabel');
+    const modalContent = document.getElementById('eventDetailsContent');
+    
+    modalTitle.textContent = `${protocol} 協議詳細統計`;
+    modalContent.innerHTML = `
+        <div class="text-center">
+            <div class="spinner-border" role="status">
+                <span class="visually-hidden">載入中...</span>
+            </div>
+        </div>
+    `;
+    
+    modal.show();
+    
+    try {
+        const response = await fetch(`/api/event_details/${taskName}/${protocol}`);
+        const data = await response.json();
+        
+        if (data.error) {
+            modalContent.innerHTML = `
+                <div class="alert alert-warning">
+                    <i class="fas fa-exclamation-triangle me-2"></i>
+                    ${data.error}
+                </div>
+            `;
+            return;
+        }
+        
+        const topConnections = data.top_connections || [];
+        
+        modalContent.innerHTML = `
+            <div class="mb-3">
+                <h6><i class="fas fa-info-circle me-2"></i>總覽</h6>
+                <p class="mb-1"><strong>協議：</strong>${data.protocol}</p>
+                <p class="mb-1"><strong>總封包數：</strong>${data.total_count?.toLocaleString() || 0}</p>
+            </div>
+            
+            <h6><i class="fas fa-trophy me-2"></i>前5名連接統計</h6>
+            ${topConnections.length === 0 ? 
+                '<div class="alert alert-info">尚無詳細統計資料</div>' :
+                `<div class="table-responsive">
+                    <table class="table table-striped table-hover">
+                        <thead>
+                            <tr>
+                                <th>排名</th>
+                                <th>來源 IP</th>
+                                <th>目標 IP</th>
+                                <th>封包數</th>
+                                <th>封包大小 (Bytes)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${topConnections.map((conn, index) => `
+                                <tr>
+                                    <td>
+                                        <span class="badge ${index < 3 ? 'bg-warning' : 'bg-secondary'}">
+                                            ${index + 1}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <code>${conn.src_ip}</code>
+                                    </td>
+                                    <td>
+                                        <code>${conn.dst_ip}</code>
+                                    </td>
+                                    <td>
+                                        <span class="badge bg-primary">${conn.packet_count?.toLocaleString() || 0}</span>
+                                    </td>
+                                    <td>
+                                        <span class="badge bg-info">${formatBytes(conn.packet_size || 0)}</span>
+                                    </td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>`
+            }
+        `;
+        
+    } catch (error) {
+        modalContent.innerHTML = `
+            <div class="alert alert-danger">
+                <i class="fas fa-exclamation-circle me-2"></i>
+                載入失敗：${error.message}
+            </div>
+        `;
+    }
+}
+
+// 格式化字節大小
+function formatBytes(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+// 從每分鐘資料生成每10分鐘統計
+function generateTenMinuteStats(perMinuteData, startTime, endTime) {
+    const result = {};
+    
+    for (const [timeStr, bytesVal] of Object.entries(perMinuteData)) {
+        try {
+            const timeObj = new Date(timeStr);
+            const minuteBoundary = Math.floor(timeObj.getMinutes() / 10) * 10;
+            const boundaryTime = new Date(timeObj);
+            boundaryTime.setMinutes(minuteBoundary, 0, 0);
+            
+            const boundaryStr = boundaryTime.toISOString().slice(0, 16).replace('T', ' ');
+            
+            if (!result[boundaryStr]) {
+                result[boundaryStr] = 0;
+            }
+            result[boundaryStr] += bytesVal;
+        } catch (e) {
+            continue;
+        }
+    }
+    
+    return result;
+}
+
+// 生成排序後的流量資料
+function getSortedFlowData(flowData, startTime, endTime) {
+    const sortedItems = Object.entries(flowData).sort();
+    const labels = [];
+    const values = [];
+    
+    for (const [timeStr, bytesVal] of sortedItems) {
+        try {
+            const timeObj = new Date(timeStr);
+            const formattedTime = timeObj.toLocaleTimeString('zh-TW', {
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+            labels.push(formattedTime);
+            values.push(bytesVal);
+        } catch (e) {
+            continue;
+        }
+    }
+    
+    return { labels, values };
+}
+
+// 取得協議標誌樣式類別
+function getProtocolBadgeClass(protocol) {
+    const protocolColors = {
+        'TCP': 'bg-primary',
+        'UDP': 'bg-success', 
+        'OTHER': 'bg-secondary',
+        'UNKNOWN': 'bg-light text-dark'
+    };
+    return protocolColors[protocol] || 'bg-secondary';
+}
+
+// 取得事件圖示
+function getEventIcon(eventType) {
+    const icons = {
+        'DNS': 'globe',
+        'DHCP': 'network-wired',
+        'SMTP': 'envelope',
+        'TCP': 'exchange-alt',
+        'TLS': 'lock',
+        'SNMP': 'chart-line',
+        'HTTP': 'globe',
+        'HTTPS': 'lock',
+        'FTP': 'file-alt',
+        'SMB': 'folder',
+        'SMB2': 'folder-open',
+        'SMB3': 'folder-plus',
+        'ICMP': 'satellite-dish',
+        'OTHER': 'question-circle'
+    };
+    return icons[eventType] || 'question-circle';
+}
+
+// 取得異常圖示
+function getAnomalyIcon(type) {
+    const icons = {
+        'high_traffic': 'tachometer-alt',
+        'protocol_anomaly': 'exclamation-triangle',
+        'geo_anomaly': 'globe-americas',
+        'time_anomaly': 'clock',
+        'suspicious_connection': 'eye'
+    };
+    return icons[type] || 'exclamation-circle';
+}
+
+// 取得異常標題
+function getAnomalyTitle(type) {
+    const titles = {
+        'high_traffic': '大流量連接警示',
+        'protocol_anomaly': '協議異常警示',
+        'geo_anomaly': '地理位置異常',
+        'time_anomaly': '時間異常警示',
+        'suspicious_connection': '可疑連接'
+    };
+    return titles[type] || '異常行為偵測';
+}
+
+// 取得嚴重程度
+function getSeverity(type) {
+    // 根據異常類型返回嚴重程度
+    const severityMap = {
+        'high_traffic': 'high',
+        'protocol_anomaly': 'medium',
+        'geo_anomaly': 'medium',
+        'time_anomaly': 'low',
+        'suspicious_connection': 'high'
+    };
+    return severityMap[type] || 'medium';
+}
+
+// 取得嚴重程度顏色
+function getSeverityColor(type) {
+    const severity = getSeverity(type);
+    const colorMap = {
+        'high': 'danger',
+        'medium': 'warning',
+        'low': 'info'
+    };
+    return colorMap[severity] || 'warning';
+}
+
+// 顯示異常詳情
+function showAnomalyDetail(anomaly) {
+    // 創建模態框內容
+    const modalHtml = `
+        <div class="modal fade" id="anomalyDetailModal" tabindex="-1" aria-labelledby="anomalyDetailModalLabel" aria-hidden="true">
+            <div class="modal-dialog modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header bg-${getSeverityColor(anomaly.type)}">
+                        <h5 class="modal-title text-white" id="anomalyDetailModalLabel">
+                            <i class="fas fa-${getAnomalyIcon(anomaly.type)} me-2"></i>
+                            ${getAnomalyTitle(anomaly.type)}
+                        </h5>
+                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <strong>嚴重程度：</strong>
+                                <span class="badge bg-${getSeverityColor(anomaly.type)} ms-2">
+                                    ${getSeverity(anomaly.type).toUpperCase()}
+                                </span>
+                            </div>
+                            <div class="col-md-6">
+                                <strong>偵測時間：</strong>
+                                <span class="text-muted">${new Date(anomaly.time).toLocaleString()}</span>
+                            </div>
+                        </div>
+                        
+                        <div class="alert alert-${getSeverityColor(anomaly.type)} alert-dismissible">
+                            <h6><i class="fas fa-info-circle me-2"></i>詳細說明</h6>
+                            <p class="mb-0">${anomaly.description}</p>
+                        </div>
+                        
+                        ${anomaly.ip ? `
+                        <div class="row mb-3">
+                            <div class="col-12">
+                                <strong>相關 IP 地址：</strong>
+                                <code class="ms-2">${anomaly.ip}</code>
+                            </div>
+                        </div>
+                        ` : ''}
+                        
+                        ${anomaly.connection ? `
+                        <div class="row mb-3">
+                            <div class="col-12">
+                                <strong>連接資訊：</strong>
+                                <code class="ms-2">${anomaly.connection}</code>
+                            </div>
+                        </div>
+                        ` : ''}
+                        
+                        ${anomaly.details ? `
+                        <div class="row">
+                            <div class="col-12">
+                                <h6><i class="fas fa-list me-2"></i>技術詳情</h6>
+                                <div class="table-responsive">
+                                    <table class="table table-sm table-striped">
+                                        <tbody>
+                                            ${Object.entries(anomaly.details).map(([key, value]) => `
+                                                <tr>
+                                                    <td><strong>${formatDetailKey(key)}</strong></td>
+                                                    <td>${formatDetailValue(key, value)}</td>
+                                                </tr>
+                                            `).join('')}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                        ` : ''}
+                        
+                        <div class="row mt-4">
+                            <div class="col-12">
+                                <h6><i class="fas fa-lightbulb me-2"></i>建議處理方式</h6>
+                                <div class="alert alert-info">
+                                    ${getRecommendations(anomaly.type)}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">關閉</button>
+                        <button type="button" class="btn btn-primary" onclick="copyAnomalyInfo('${JSON.stringify(anomaly).replace(/'/g, "\\'")}')">
+                            <i class="fas fa-copy me-1"></i>複製資訊
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // 移除現有模態框
+    const existingModal = document.getElementById('anomalyDetailModal');
+    if (existingModal) {
+        existingModal.remove();
+    }
+    
+    // 添加新模態框
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+    
+    // 顯示模態框
+    const modal = new bootstrap.Modal(document.getElementById('anomalyDetailModal'));
+    modal.show();
+}
+
+// 格式化詳情鍵名
+function formatDetailKey(key) {
+    const keyMap = {
+        'bytes': '流量大小',
+        'rank': '排名',
+        'percentage': '百分比',
+        'protocol': '協議',
+        'count': '事件數量',
+        'country': '國家/地區',
+        'time_period': '時間區間',
+        'hour': '小時'
+    };
+    return keyMap[key] || key;
+}
+
+// 格式化詳情值
+function formatDetailValue(key, value) {
+    if (key === 'bytes') {
+        return formatBytes(value);
+    } else if (key === 'percentage') {
+        return `${value}%`;
+    } else if (key === 'count') {
+        return value.toLocaleString();
+    }
+    return value;
+}
+
+// 取得建議處理方式
+function getRecommendations(type) {
+    const recommendations = {
+        'high_traffic': `
+            <ol>
+                <li>檢查連接的目標 IP 是否為已知的合法服務</li>
+                <li>分析流量內容是否包含敏感資料</li>
+                <li>確認是否為預期的大檔案傳輸</li>
+                <li>考慮實施流量限制或監控</li>
+            </ol>
+        `,
+        'protocol_anomaly': `
+            <ol>
+                <li>深入分析該協議的使用模式</li>
+                <li>檢查是否有未預期的應用程式在執行</li>
+                <li>確認協議流量的合法性</li>
+                <li>考慮實施協議白名單</li>
+            </ol>
+        `,
+        'geo_anomaly': `
+            <ol>
+                <li>檢查來源 IP 的信譽度</li>
+                <li>確認是否為合法的國際業務需求</li>
+                <li>考慮實施地理位置過濾</li>
+                <li>加強對該地區流量的監控</li>
+            </ol>
+        `,
+        'time_anomaly': `
+            <ol>
+                <li>檢查深夜時段的系統使用者</li>
+                <li>確認是否為排程的系統維護或備份</li>
+                <li>分析異常時段的活動類型</li>
+                <li>考慮實施時間基礎的存取控制</li>
+            </ol>
+        `,
+        'suspicious_connection': `
+            <ol>
+                <li>立即隔離相關系統進行詳細檢查</li>
+                <li>分析連接的具體內容和目的</li>
+                <li>檢查是否有其他相似的可疑活動</li>
+                <li>更新安全策略和監控規則</li>
+            </ol>
+        `
+    };
+    return recommendations[type] || '請聯繫資安團隊進行進一步分析。';
+}
+
+// 複製異常資訊
+function copyAnomalyInfo(anomalyJson) {
+    try {
+        const anomaly = JSON.parse(anomalyJson);
+        const text = `
+異常類型：${getAnomalyTitle(anomaly.type)}
+嚴重程度：${getSeverity(anomaly.type).toUpperCase()}
+偵測時間：${new Date(anomaly.time).toLocaleString()}
+描述：${anomaly.description}
+${anomaly.ip ? `相關 IP：${anomaly.ip}` : ''}
+${anomaly.connection ? `連接資訊：${anomaly.connection}` : ''}
+        `.trim();
+        
+        navigator.clipboard.writeText(text).then(() => {
+            alert('異常資訊已複製到剪貼簿');
+        });
+    } catch (e) {
+        console.error('複製失敗:', e);
+    }
+}
+
+// 顯示特定時間段的流量詳情
+async function showFlowDetails(timeKey) {
+    try {
+        const encodedTimeKey = encodeURIComponent(timeKey);
+        const response = await fetch(`/api/flow_details/${taskName}/${encodedTimeKey}`);
+        const data = await response.json();
+        
+        if (data.error) {
+            alert('載入時間段詳情失敗: ' + data.error);
+            return;
+        }
+        
+        // 顯示詳情區域
+        document.getElementById('flowDetailsSection').style.display = 'block';
+        
+        // 更新標題
+        document.getElementById('selectedTimeLabel').textContent = `${data.time_period} 詳細統計`;
+        
+        // 更新總流量
+        document.getElementById('selectedTimeTotalBytes').textContent = formatBytes(data.total_bytes);
+        
+        // 更新連接數量
+        document.getElementById('selectedTimeConnectionCount').textContent = `${data.top_connections.length} 個`;
+        
+        // 更新表格
+        const tbody = document.getElementById('selectedTimeTopConnections');
+        
+        if (data.top_connections.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="4" class="text-center text-muted">
+                        <i class="fas fa-info-circle me-2"></i>
+                        該時間段暫無詳細連接統計
+                    </td>
+                </tr>
+            `;
+        } else {
+            tbody.innerHTML = data.top_connections.map((conn, index) => {
+                const percentage = data.total_bytes > 0 ? ((conn.bytes / data.total_bytes) * 100).toFixed(1) : '0.0';
+                const rankClass = index < 3 ? 'bg-warning' : 'bg-secondary';
+                const rankIcon = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : '';
+                
+                return `
+                    <tr>
+                        <td>
+                            <span class="badge ${rankClass}">
+                                ${rankIcon} ${index + 1}
+                            </span>
+                        </td>
+                        <td>
+                            <code class="text-break">${conn.connection}</code>
+                        </td>
+                        <td>
+                            <span class="badge bg-info">${formatBytes(conn.bytes)}</span>
+                        </td>
+                        <td>
+                            <span class="badge bg-success">${percentage}%</span>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
+        
+        // 滾動到詳情區域
+        document.getElementById('flowDetailsSection').scrollIntoView({
+            behavior: 'smooth',
+            block: 'start'
+        });
+        
+    } catch (error) {
+        console.error('載入流量詳情失敗:', error);
+        alert('載入流量詳情失敗，請重試');
+    }
+}
+
+// 隱藏流量詳情
+function hideFlowDetails() {
+    document.getElementById('flowDetailsSection').style.display = 'none';
+}
+
+// 顯示 Top IP 連線的高流量時間段詳情
+function showTopIpDetails(connectionIndex) {
+    if (!window.topIpData || !window.topIpData[connectionIndex]) {
+        alert('無法載入連線詳細資訊');
+        return;
+    }
+    
+    const connectionData = window.topIpData[connectionIndex];
+    const timePeriods = connectionData.top_3_time_periods || [];
+    const protocol = connectionData.protocol || 'UNKNOWN';
+    
+    // 顯示詳情區域
+    document.getElementById('topIpDetailsSection').style.display = 'block';
+    
+    // 更新連線資訊
+    document.getElementById('selectedConnectionLabel').textContent = `${connectionData.connection} - 高流量時間段分析`;
+    document.getElementById('selectedConnectionName').textContent = connectionData.connection;
+    document.getElementById('selectedConnectionName').title = connectionData.connection;
+    
+    // 顯示協議資訊
+    const protocolElement = document.getElementById('selectedConnectionProtocol');
+    const protocolBadgeClass = getProtocolBadgeClass(protocol);
+    protocolElement.innerHTML = `<span class="badge ${protocolBadgeClass}">${protocol}</span>`;
+    
+    document.getElementById('selectedConnectionTotalBytes').textContent = formatBytes(connectionData.bytes);
+    document.getElementById('selectedConnectionPeriodCount').textContent = `${timePeriods.length} 個時段`;
+    
+    // 更新時間段表格
+    const tbody = document.getElementById('selectedConnectionTimePeriods');
+    
+    if (timePeriods.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="5" class="text-center text-muted">
+                    <i class="fas fa-info-circle me-2"></i>
+                    該連線暫無詳細時間段統計資訊
+                </td>
+            </tr>
+        `;
+    } else {
+        tbody.innerHTML = timePeriods.map((period, index) => {
+            const rankClass = index === 0 ? 'bg-warning' : index === 1 ? 'bg-info' : 'bg-secondary';
+            const rankIcon = index === 0 ? '🥇' : index === 1 ? '🥈' : '🥉';
+            
+            // 計算流量密度 (bytes per minute)
+            const flowDensity = period.bytes / 10; // 10分鐘區間
+            
+            return `
+                <tr>
+                    <td>
+                        <span class="badge ${rankClass}">
+                            ${rankIcon} ${period.rank}
+                        </span>
+                    </td>
+                    <td>
+                        <strong>${period.time_period}</strong>
+                        <br>
+                        <small class="text-muted">(10分鐘區間)</small>
+                    </td>
+                    <td>
+                        <span class="badge bg-primary">${formatBytes(period.bytes)}</span>
+                    </td>
+                    <td>
+                        <span class="badge bg-success">${period.percentage_of_total}%</span>
+                        <br>
+                        <small class="text-muted">佔總流量</small>
+                    </td>
+                    <td>
+                        <span class="badge bg-info">${formatBytes(flowDensity)}/min</span>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+    }
+    
+    // 滾動到詳情區域
+    document.getElementById('topIpDetailsSection').scrollIntoView({
+        behavior: 'smooth',
+        block: 'start'
+    });
+}
+
+// 隱藏 Top IP 詳情
+function hideTopIpDetails() {
+    document.getElementById('topIpDetailsSection').style.display = 'none';
+}
+
+// HTML 轉義函數
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// 頁面載入完成後執行
+document.addEventListener('DOMContentLoaded', function() {
+    loadAllData();
+});
+</script>
+{% endblock %}

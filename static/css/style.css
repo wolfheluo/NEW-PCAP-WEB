@@ -1,0 +1,560 @@
+/* PCAP Analyzer Custom Styles */
+
+/* 自定義變數 */
+:root {
+    --primary-color: #0d6efd;
+    --secondary-color: #6c757d;
+    --success-color: #198754;
+    --warning-color: #ffc107;
+    --danger-color: #dc3545;
+    --info-color: #0dcaf0;
+    --light-color: #f8f9fa;
+    --dark-color: #212529;
+    --border-radius: 0.375rem;
+    --box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+    --transition: all 0.15s ease-in-out;
+}
+
+/* 全域樣式 */
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.6;
+    color: var(--dark-color);
+}
+
+/* 導航列樣式 */
+.navbar-brand {
+    font-weight: 600;
+    font-size: 1.25rem;
+}
+
+.navbar-nav .nav-link {
+    font-weight: 500;
+    transition: var(--transition);
+}
+
+.navbar-nav .nav-link:hover {
+    color: rgba(255, 255, 255, 0.8) !important;
+}
+
+/* 卡片樣式 */
+.card {
+    border: 1px solid #dee2e6;
+    border-radius: var(--border-radius);
+    box-shadow: var(--box-shadow);
+    transition: var(--transition);
+}
+
+.card:hover {
+    box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+}
+
+/* 異常詳情模態視窗樣式 */
+#anomalyDetailModal .modal-dialog {
+    max-width: 90vw;
+}
+
+#anomalyDetailModal .modal-body {
+    max-height: 70vh;
+    overflow-y: auto;
+}
+
+#anomalyDetailModal .table td {
+    vertical-align: middle;
+    padding: 0.5rem;
+}
+
+#anomalyDetailModal .table td:first-child {
+    width: 30%;
+    font-weight: 500;
+}
+
+#anomalyDetailModal code {
+    font-size: 0.875rem;
+    border-radius: 0.25rem;
+}
+
+#anomalyDetailModal .alert {
+    border-radius: 0.25rem;
+    margin-bottom: 0.5rem;
+}
+
+#anomalyDetailModal ol {
+    padding-left: 1.5rem;
+}
+
+#anomalyDetailModal ol li {
+    margin-bottom: 0.5rem;
+}
+
+/* 異常項目詳情按鈕樣式 */
+.anomaly-detail-btn {
+    transition: var(--transition);
+}
+
+.anomaly-detail-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 0.25rem 0.5rem rgba(0, 0, 0, 0.1);
+}
+
+/* Payload 顯示樣式 */
+#anomalyDetailModal .payload-container {
+    background-color: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 0.375rem;
+}
+
+#anomalyDetailModal .payload-tabs .nav-link {
+    border-radius: 0.375rem 0.375rem 0 0;
+    border: 1px solid transparent;
+    margin-right: 0.25rem;
+}
+
+#anomalyDetailModal .payload-tabs .nav-link.active {
+    background-color: #f8f9fa;
+    border-color: #dee2e6 #dee2e6 #f8f9fa;
+}
+
+#anomalyDetailModal pre {
+    white-space: pre-wrap;
+    word-break: break-all;
+    margin: 0;
+}
+
+#anomalyDetailModal .hex-display {
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-size: 0.8rem;
+    line-height: 1.4;
+    color: #495057;
+}
+
+#anomalyDetailModal .ascii-display {
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-size: 0.875rem;
+    line-height: 1.5;
+    color: #212529;
+}
+
+/* 複製按鈕樣式 */
+.copy-btn {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+}
+
+.copy-btn:hover {
+    opacity: 1;
+}
+
+.payload-container {
+    position: relative;
+}
+
+.stats-card {
+    transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+}
+
+.stats-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+}
+
+.card-header {
+    background-color: var(--light-color);
+    border-bottom: 1px solid #dee2e6;
+    font-weight: 600;
+}
+
+/* 按鈕樣式 */
+.btn {
+    font-weight: 500;
+    transition: var(--transition);
+    border-radius: var(--border-radius);
+}
+
+.btn:hover {
+    transform: translateY(-1px);
+}
+
+.btn-primary {
+    background-color: var(--primary-color);
+    border-color: var(--primary-color);
+}
+
+.btn-outline-primary {
+    color: var(--primary-color);
+    border-color: var(--primary-color);
+}
+
+.btn-outline-primary:hover {
+    background-color: var(--primary-color);
+    border-color: var(--primary-color);
+}
+
+/* 徽章樣式 */
+.badge {
+    font-weight: 500;
+    font-size: 0.75em;
+}
+
+.badge.bg-success {
+    background-color: var(--success-color) !important;
+}
+
+.badge.bg-warning {
+    background-color: var(--warning-color) !important;
+    color: var(--dark-color) !important;
+}
+
+.badge.bg-danger {
+    background-color: var(--danger-color) !important;
+}
+
+/* 警告框樣式 */
+.alert {
+    border-radius: var(--border-radius);
+    border: none;
+}
+
+.alert-success {
+    background-color: #d1e7dd;
+    color: #0f5132;
+}
+
+.alert-warning {
+    background-color: #fff3cd;
+    color: #664d03;
+}
+
+.alert-danger {
+    background-color: #f8d7da;
+    color: #721c24;
+}
+
+.alert-info {
+    background-color: #d1ecf1;
+    color: #055160;
+}
+
+/* 異常警示樣式 */
+.anomaly-high {
+    border-left: 4px solid var(--danger-color);
+}
+
+.anomaly-medium {
+    border-left: 4px solid var(--warning-color);
+}
+
+.anomaly-low {
+    border-left: 4px solid var(--info-color);
+}
+
+/* 圖表容器 */
+.chart-container {
+    position: relative;
+    height: 400px;
+    margin: 20px 0;
+}
+
+/* 表格樣式 */
+.table {
+    margin-bottom: 0;
+}
+
+.table th {
+    border-top: none;
+    font-weight: 600;
+    background-color: var(--light-color);
+}
+
+.table-striped > tbody > tr:nth-of-type(odd) > td {
+    background-color: rgba(0, 0, 0, 0.025);
+}
+
+.table-hover > tbody > tr:hover > td {
+    background-color: rgba(0, 0, 0, 0.075);
+}
+
+/* 標籤頁樣式 */
+.nav-tabs {
+    border-bottom: 2px solid #dee2e6;
+}
+
+.nav-tabs .nav-link {
+    border: none;
+    color: var(--secondary-color);
+    font-weight: 500;
+    padding: 0.75rem 1rem;
+    transition: var(--transition);
+}
+
+.nav-tabs .nav-link:hover {
+    color: var(--primary-color);
+    border-color: transparent;
+}
+
+.nav-tabs .nav-link.active {
+    color: var(--primary-color);
+    background-color: transparent;
+    border-bottom: 2px solid var(--primary-color);
+}
+
+/* 載入指示器 */
+.spinner-border {
+    width: 3rem;
+    height: 3rem;
+}
+
+/* 頁尾樣式 */
+.footer {
+    background-color: var(--light-color);
+    border-top: 1px solid #dee2e6;
+    margin-top: 3rem;
+}
+
+/* 代碼樣式 */
+code {
+    background-color: #f8f9fa;
+    color: #e83e8c;
+    padding: 0.125rem 0.25rem;
+    border-radius: 0.25rem;
+    font-size: 0.875em;
+}
+
+/* 響應式設計 */
+@media (max-width: 768px) {
+    .container {
+        padding-left: 15px;
+        padding-right: 15px;
+    }
+    
+    .card-body {
+        padding: 1rem;
+    }
+    
+    .chart-container {
+        height: 300px;
+        margin: 10px 0;
+    }
+    
+    .nav-tabs .nav-link {
+        padding: 0.5rem 0.75rem;
+        font-size: 0.9rem;
+    }
+    
+    .btn {
+        font-size: 0.9rem;
+    }
+}
+
+@media (max-width: 576px) {
+    .chart-container {
+        height: 250px;
+    }
+    
+    .stats-card .card-body {
+        padding: 0.75rem;
+    }
+    
+    .nav-tabs .nav-link {
+        padding: 0.5rem;
+        font-size: 0.8rem;
+    }
+    
+    .table-responsive {
+        font-size: 0.9rem;
+    }
+}
+
+/* 自定義動畫 */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.fade-in {
+    animation: fadeIn 0.3s ease-in-out;
+}
+
+/* 滾動條樣式 */
+::-webkit-scrollbar {
+    width: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--light-color);
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--secondary-color);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #495057;
+}
+
+/* 工具提示樣式 */
+.tooltip-inner {
+    background-color: var(--dark-color);
+    border-radius: var(--border-radius);
+}
+
+/* 進度條樣式 */
+.progress {
+    height: 0.5rem;
+    border-radius: var(--border-radius);
+}
+
+.progress-bar {
+    transition: width 0.6s ease;
+}
+
+/* 特殊圖示樣式 */
+.fa-network-wired {
+    color: var(--primary-color);
+}
+
+.fa-database {
+    color: var(--primary-color);
+}
+
+.fa-clock {
+    color: var(--info-color);
+}
+
+.fa-exclamation-triangle {
+    color: var(--warning-color);
+}
+
+.fa-shield-alt {
+    color: var(--danger-color);
+}
+
+/* 空狀態樣式 */
+.empty-state {
+    text-align: center;
+    padding: 3rem 1rem;
+    color: var(--secondary-color);
+}
+
+.empty-state i {
+    font-size: 4rem;
+    margin-bottom: 1rem;
+    opacity: 0.6;
+}
+
+.empty-state h4 {
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+}
+
+.empty-state p {
+    margin-bottom: 0;
+    font-size: 1.1rem;
+}
+
+/* 異常行為摺疊樣式 */
+.anomaly-collapse-header {
+    background: rgba(var(--bs-warning-rgb), 0.1);
+    border: 1px solid rgba(var(--bs-warning-rgb), 0.2);
+    transition: var(--transition);
+}
+
+.anomaly-collapse-header:hover {
+    background: rgba(var(--bs-warning-rgb), 0.15);
+}
+
+.anomaly-collapse-button {
+    color: inherit !important;
+    text-decoration: none !important;
+    width: 100%;
+    text-align: left;
+    border: none;
+    background: none;
+    padding: 0;
+    font-weight: 600;
+}
+
+.anomaly-collapse-button:hover {
+    color: inherit !important;
+}
+
+.collapse-icon {
+    transition: transform 0.2s ease-in-out;
+}
+
+.anomaly-collapse-button[aria-expanded="true"] .collapse-icon {
+    transform: rotate(180deg);
+}
+
+/* 異常詳情卡片樣式 */
+.anomaly-detail-card {
+    border-left: 4px solid;
+    margin-bottom: 0.75rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    transition: var(--transition);
+}
+
+.anomaly-detail-card:hover {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    transform: translateY(-1px);
+}
+
+.anomaly-detail-card.border-danger {
+    border-left-color: var(--danger-color);
+}
+
+.anomaly-detail-card.border-warning {
+    border-left-color: var(--warning-color);
+}
+
+.anomaly-detail-card.border-info {
+    border-left-color: var(--info-color);
+}
+
+/* 異常類型統計徽章 */
+.anomaly-count-badge {
+    font-size: 0.75rem;
+    padding: 0.25rem 0.5rem;
+}
+
+/* 異常詳情資訊樣式 */
+.anomaly-info-row {
+    background: rgba(var(--bs-light-rgb), 0.5);
+    border-radius: 0.25rem;
+    padding: 0.5rem;
+    margin-top: 0.5rem;
+}
+
+.anomaly-meta {
+    font-size: 0.875rem;
+    color: var(--secondary-color);
+}
+
+.anomaly-meta i {
+    color: var(--info-color);
+}
+
+/* 響應式調整 */
+@media (max-width: 768px) {
+    .anomaly-detail-card .row > div {
+        margin-bottom: 0.25rem;
+    }
+    
+    .anomaly-collapse-button {
+        font-size: 0.9rem;
+    }
+    
+    .anomaly-count-badge {
+        font-size: 0.7rem;
+    }
+}

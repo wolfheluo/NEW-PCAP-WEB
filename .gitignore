@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.env
+.env
+venv/
+ENV/
+.envrc
+
+# VS Code
+.vscode/
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# Logs
+*.log
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Backup
+backup/*
+
+# PCAPs
+pcaps/*
+project/*
+
+# Project output
+project/*/filtered_merged_fast.log
+project/*/merged_fast.log
+
+# Others
+*.bak
+*.swp
+*.swo
+*.mmdb
+
+# Git
+.git/

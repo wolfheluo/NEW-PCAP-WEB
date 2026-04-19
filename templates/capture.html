@@ -1,0 +1,381 @@
+{% extends "base.html" %}
+
+{% block title %}{{ project_name }} - 封包側錄{% endblock %}
+
+{% block extra_css %}
+<style>
+.packet-counter {
+    font-size: 3rem;
+    font-weight: bold;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 2px;
+}
+.status-badge {
+    font-size: 0.9rem;
+    padding: 6px 14px;
+}
+.progress-log {
+    max-height: 200px;
+    overflow-y: auto;
+    background: #1e1e1e;
+    color: #d4d4d4;
+    font-family: monospace;
+    font-size: 0.82rem;
+    border-radius: 6px;
+    padding: 12px;
+}
+.progress-log .log-line { margin-bottom: 2px; }
+.log-suricata { color: #e8a838; }
+.log-tshark   { color: #4ec9b0; }
+.log-merging  { color: #9cdcfe; }
+.log-complete { color: #6a9955; }
+.log-error    { color: #f44747; }
+.card-capture {
+    border: 2px solid #dee2e6;
+    transition: border-color 0.3s;
+}
+.card-capture.capturing {
+    border-color: #0d6efd;
+    box-shadow: 0 0 0 3px rgba(13,110,253,.15);
+}
+.card-capture.analyzing {
+    border-color: #fd7e14;
+    box-shadow: 0 0 0 3px rgba(253,126,20,.15);
+}
+.pulse {
+    animation: pulse 1.5s infinite;
+}
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.4; }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row mb-3">
+    <div class="col-12">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="{{ url_for('index') }}">任務總覽</a></li>
+                <li class="breadcrumb-item active">{{ project_name }}</li>
+            </ol>
+        </nav>
+        <h2><i class="fas fa-circle-dot me-2 text-danger"></i>封包側錄 — {{ project_name }}</h2>
+    </div>
+</div>
+
+<div class="row g-4">
+    <!-- 左欄：側錄設定 -->
+    <div class="col-lg-5">
+        <div class="card card-capture" id="captureCard">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span><i class="fas fa-sliders me-2"></i>側錄設定</span>
+                <span class="badge bg-secondary status-badge" id="statusBadge">閒置</span>
+            </div>
+            <div class="card-body">
+
+                <!-- 網卡選擇 -->
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">網路介面</label>
+                    <select class="form-select" id="ifaceSelect">
+                        <option value="">— 載入中… —</option>
+                    </select>
+                    <div class="form-text">選擇要擷取流量的網路介面</div>
+                </div>
+
+                <!-- 排除 IP -->
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">排除 IP <small class="text-muted">（可選）</small></label>
+                    <input type="text" class="form-control" id="excludeIps"
+                           placeholder="例：192.168.1.1 10.0.0.1（空格分隔）">
+                    <div class="form-text">這些 IP 的流量不會計入統計</div>
+                </div>
+
+                <!-- 按鈕 -->
+                <div class="d-grid gap-2">
+                    <button class="btn btn-danger btn-lg" id="btnStart" onclick="startCapture()">
+                        <i class="fas fa-circle me-2"></i>開始側錄
+                    </button>
+                    <button class="btn btn-outline-secondary btn-lg d-none" id="btnStop" onclick="stopCapture()">
+                        <i class="fas fa-stop me-2"></i>停止側錄
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 分析完成後的跳轉卡片 -->
+        <div class="card mt-3 border-success d-none" id="doneCard">
+            <div class="card-body text-center py-3">
+                <i class="fas fa-check-circle fa-2x text-success mb-2"></i>
+                <p class="mb-2 fw-semibold">分析完成！</p>
+                <a href="{{ url_for('dashboard', task_name=project_name) }}" class="btn btn-success">
+                    <i class="fas fa-chart-bar me-1"></i>前往分析儀表板
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- 右欄：即時狀態 -->
+    <div class="col-lg-7">
+        <!-- 封包計數 -->
+        <div class="card mb-3">
+            <div class="card-body text-center py-4">
+                <div class="text-muted mb-1"><i class="fas fa-network-wired me-1"></i>已擷取封包數</div>
+                <div class="packet-counter text-primary" id="packetCount">0</div>
+                <div class="text-muted small mt-1" id="captureTimer">—</div>
+            </div>
+        </div>
+
+        <!-- 分析進度 -->
+        <div class="card">
+            <div class="card-header">
+                <i class="fas fa-cogs me-2"></i>分析進度
+                <span class="badge bg-warning text-dark ms-2 d-none pulse" id="analyzingBadge">分析中</span>
+            </div>
+            <div class="card-body pb-2">
+                <!-- 進度條 -->
+                <div class="progress mb-3" style="height: 8px;" id="progressBar" style="display:none">
+                    <div class="progress-bar progress-bar-striped progress-bar-animated"
+                         id="progressFill" role="progressbar" style="width:0%"></div>
+                </div>
+                <!-- 日誌 -->
+                <div class="progress-log" id="progressLog">
+                    <div class="log-line text-muted">等待側錄開始…</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<!-- Socket.IO -->
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+<script>
+const PROJECT_NAME = {{ project_name | tojson }};
+const socket = io();
+
+let captureStartTime = null;
+let timerInterval = null;
+
+// ─── 初始化 ───────────────────────────────────
+document.addEventListener('DOMContentLoaded', function () {
+    loadInterfaces();
+    pollStatus();
+});
+
+// ─── 載入網卡清單 ─────────────────────────────
+function loadInterfaces() {
+    fetch('/api/interfaces')
+        .then(r => r.json())
+        .then(data => {
+            const sel = document.getElementById('ifaceSelect');
+            if (data.error) {
+                sel.innerHTML = `<option value="">錯誤：${data.error}</option>`;
+                return;
+            }
+            if (!data.length) {
+                sel.innerHTML = '<option value="">找不到網路介面</option>';
+                return;
+            }
+            sel.innerHTML = data.map(i =>
+                `<option value="${i.index}">${i.index}. ${i.name}</option>`
+            ).join('');
+        })
+        .catch(() => {
+            document.getElementById('ifaceSelect').innerHTML =
+                '<option value="">無法取得網路介面列表</option>';
+        });
+}
+
+// ─── 查詢初始狀態 ──────────────────────────────
+function pollStatus() {
+    fetch(`/api/capture/status/${PROJECT_NAME}`)
+        .then(r => r.json())
+        .then(data => {
+            if (data.status === 'capturing') {
+                setCapturingUI(data.packet_count);
+                captureStartTime = data.started_at ? new Date(data.started_at) : new Date();
+                startTimer();
+            } else if (data.status === 'stopped' || data.status === 'stopping') {
+                setStoppedUI(data.packet_count);
+            }
+            if (data.analyzing > 0) {
+                showAnalyzing(true);
+            }
+        });
+}
+
+// ─── 開始側錄 ─────────────────────────────────
+function startCapture() {
+    const ifaceIndex = document.getElementById('ifaceSelect').value;
+    const excludeIps = document.getElementById('excludeIps').value.trim();
+
+    if (!ifaceIndex) {
+        alert('請選擇網路介面');
+        return;
+    }
+
+    fetch('/api/capture/start', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            project_name: PROJECT_NAME,
+            iface_index: ifaceIndex,
+            exclude_ips: excludeIps
+        })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.error) {
+            alert('啟動失敗：' + data.error);
+            return;
+        }
+        captureStartTime = new Date();
+        setCapturingUI(0);
+        startTimer();
+        addLog('開始側錄，每 200 MB 自動切割一個 PCAP 檔案', 'text-info');
+    })
+    .catch(e => alert('請求失敗：' + e));
+}
+
+// ─── 停止側錄 ─────────────────────────────────
+function stopCapture() {
+    if (!confirm('確定停止側錄？停止後將自動觸發分析。')) return;
+
+    fetch('/api/capture/stop', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({project_name: PROJECT_NAME})
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.error) {
+            alert('停止失敗：' + data.error);
+            return;
+        }
+        setStoppedUI(null);
+        stopTimer();
+        addLog('側錄已停止，正在排入分析佇列…', 'text-warning');
+    });
+}
+
+// ─── UI 狀態切換 ───────────────────────────────
+function setCapturingUI(count) {
+    document.getElementById('btnStart').classList.add('d-none');
+    document.getElementById('btnStop').classList.remove('d-none');
+    document.getElementById('ifaceSelect').disabled = true;
+    document.getElementById('excludeIps').disabled = true;
+    const badge = document.getElementById('statusBadge');
+    badge.className = 'badge bg-danger status-badge';
+    badge.textContent = '側錄中';
+    document.getElementById('captureCard').classList.add('capturing');
+    if (count !== null) updatePacketCount(count);
+}
+
+function setStoppedUI(count) {
+    document.getElementById('btnStart').classList.remove('d-none');
+    document.getElementById('btnStop').classList.add('d-none');
+    document.getElementById('ifaceSelect').disabled = false;
+    document.getElementById('excludeIps').disabled = false;
+    const badge = document.getElementById('statusBadge');
+    badge.className = 'badge bg-secondary status-badge';
+    badge.textContent = '已停止';
+    document.getElementById('captureCard').classList.remove('capturing');
+    if (count !== null) updatePacketCount(count);
+}
+
+function showAnalyzing(show) {
+    const badge = document.getElementById('analyzingBadge');
+    const card = document.getElementById('captureCard');
+    if (show) {
+        badge.classList.remove('d-none');
+        card.classList.add('analyzing');
+        document.getElementById('progressBar').removeAttribute('style');
+    } else {
+        badge.classList.add('d-none');
+        card.classList.remove('analyzing');
+    }
+}
+
+function updatePacketCount(n) {
+    document.getElementById('packetCount').textContent = n.toLocaleString();
+}
+
+// ─── 計時器 ────────────────────────────────────
+function startTimer() {
+    if (timerInterval) clearInterval(timerInterval);
+    timerInterval = setInterval(() => {
+        if (!captureStartTime) return;
+        const elapsed = Math.floor((Date.now() - captureStartTime) / 1000);
+        const h = String(Math.floor(elapsed / 3600)).padStart(2, '0');
+        const m = String(Math.floor((elapsed % 3600) / 60)).padStart(2, '0');
+        const s = String(elapsed % 60).padStart(2, '0');
+        document.getElementById('captureTimer').textContent = `已側錄 ${h}:${m}:${s}`;
+    }, 1000);
+}
+
+function stopTimer() {
+    if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+}
+
+// ─── 日誌 ──────────────────────────────────────
+function addLog(msg, cssClass = '') {
+    const log = document.getElementById('progressLog');
+    const line = document.createElement('div');
+    line.className = 'log-line ' + cssClass;
+    const now = new Date().toLocaleTimeString();
+    line.textContent = `[${now}] ${msg}`;
+    log.appendChild(line);
+    log.scrollTop = log.scrollHeight;
+}
+
+function setProgress(pct) {
+    document.getElementById('progressFill').style.width = pct + '%';
+}
+
+// ─── Socket.IO 事件 ────────────────────────────
+socket.on('packet_count', data => {
+    if (data.project !== PROJECT_NAME) return;
+    updatePacketCount(data.count);
+});
+
+socket.on('capture_stopped', data => {
+    if (data.project !== PROJECT_NAME) return;
+    setStoppedUI(null);
+    stopTimer();
+});
+
+socket.on('analysis_progress', data => {
+    if (data.project !== PROJECT_NAME) return;
+    showAnalyzing(true);
+    setProgress(data.percent);
+
+    const stageMap = {
+        'suricata': ['log-suricata', `Suricata 分析中：${data.file}`],
+        'tshark':   ['log-tshark',   `TShark 統計中：${data.file}`],
+        'merging':  ['log-merging',  `合併分析結果：${data.file}`],
+        'complete': ['log-complete', `完成：${data.file}`],
+    };
+    const [cls, msg] = stageMap[data.stage] || ['', data.stage + ': ' + data.file];
+    addLog(msg, cls);
+});
+
+socket.on('analysis_complete', data => {
+    if (data.project !== PROJECT_NAME) return;
+    addLog('所有分析完成！', 'log-complete');
+    showAnalyzing(false);
+    setProgress(100);
+    document.getElementById('doneCard').classList.remove('d-none');
+});
+
+socket.on('analysis_error', data => {
+    if (data.project !== PROJECT_NAME) return;
+    addLog('分析發生錯誤：' + data.error, 'log-error');
+    showAnalyzing(false);
+});
+
+
+</script>
+{% endblock %}
