@@ -101,7 +101,15 @@ def run_suricata_on_pcap(pcap_file, out_dir, suricata_exe=SURICATA_EXE_DEFAULT):
     if not os.path.exists(suricata_exe):
         raise FileNotFoundError(f"找不到 Suricata: {suricata_exe}")
 
-    cmd = [suricata_exe, "-r", pcap_file, "-l", out_dir]
+    cmd = [
+        suricata_exe,
+        "-r", pcap_file,
+        "-l", out_dir,
+        # 離線 PCAP 分析：覆寫 HOME_NET/EXTERNAL_NET 為 any，
+        # 避免因 IP 範圍不符合預設 RFC1918 而導致規則全數不匹配
+        "--set", "vars.address-groups.HOME_NET=any",
+        "--set", "vars.address-groups.EXTERNAL_NET=any",
+    ]
     result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8')
 
     if result.returncode != 0:
