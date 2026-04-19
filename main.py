@@ -41,12 +41,12 @@ SURICATA_EXE = r"C:\Program Files\Suricata\suricata.exe"
 TSHARK_EXE = r"C:\Program Files\Wireshark\tshark.exe"
 DUMPCAP_EXE = r"C:\Program Files\Wireshark\dumpcap.exe"
 GEOIP_DB = "GeoLite2-City.mmdb"
-SETTING_FILE = "setting.json"
-PCAP_SPLIT_SIZE_KB = 204800  # 預設 200 MB，可由 setting.json 覆寫
+SETTING_FILE = "settings.json"
+PCAP_SPLIT_SIZE_KB = 204800  # 預設 200 MB，可由 settings.json 覆寫
 
 os.makedirs(PROJECT_DIR, exist_ok=True)
 
-# ── 讀取 / 寫入 setting.json ──────────────────────────────
+# ── 讀取 / 寫入 settings.json ──────────────────────────────
 def _load_settings() -> dict:
     if os.path.exists(SETTING_FILE):
         try:

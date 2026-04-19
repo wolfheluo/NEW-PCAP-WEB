@@ -38,6 +38,7 @@ project/*/merged_fast.log
 *.swp
 *.swo
 *.mmdb
+settings.json
 
 # Git
 .git/
