@@ -144,8 +144,8 @@
                 <div class="mb-3">
                     <label class="form-label fw-semibold">排除 IP <small class="text-muted">（可選）</small></label>
                     <input type="text" class="form-control" id="excludeIps"
-                           placeholder="例：192.168.1.1 10.0.0.1（空格分隔）">
-                    <div class="form-text">這些 IP 的流量不會計入統計</div>
+                           placeholder="例：192.168.1.1, 10.0.0.1（空格或逗號分隔）">
+                    <div class="form-text">這些 IP 的流量不會計入統計；側錄結束後可修改此欄位再點「重新分析」</div>
                 </div>
 
                 <!-- 按鈕 -->
@@ -258,8 +258,21 @@ let isCapturing = false;      // 目前是否正在側錄中
 document.addEventListener('DOMContentLoaded', function () {
     loadInterfaces();
     loadSavedLog();
+    loadProjectSettings();
     pollStatus();
 });
+
+// ─── 載入專案設定（排除 IP 等）────────────────
+function loadProjectSettings() {
+    fetch(`/api/project/settings/${PROJECT_NAME}`)
+        .then(r => r.json())
+        .then(d => {
+            if (d.exclude_ips) {
+                document.getElementById('excludeIps').value = d.exclude_ips;
+            }
+        })
+        .catch(() => {});
+}
 
 // ─── 載入已儲存的進度記錄 ─────────────────────
 function loadSavedLog() {
@@ -716,8 +729,16 @@ function resumeAnalysis() {
 
 // ─── 重新分析 ───────────────────────────────
 function reanalyzeAll() {
-    if (!confirm('確定重新分析所有 PCAP？現有分析結果將會被清除。')) return;
-    fetch(`/api/capture/reanalyze/${PROJECT_NAME}`, { method: 'POST' })
+    const excludeIps = document.getElementById('excludeIps').value.trim();
+    const confirmMsg = excludeIps
+        ? `確定以新的排除IP重新分析所有 PCAP？\n排除：${excludeIps}\n\n現有分析結果將會被清除。`
+        : '確定重新分析所有 PCAP？現有分析結果將會被清除。';
+    if (!confirm(confirmMsg)) return;
+    fetch(`/api/capture/reanalyze/${PROJECT_NAME}`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ exclude_ips: excludeIps }),
+    })
         .then(r => r.json())
         .then(d => {
             if (!d.ok) { alert('錯誤：' + (d.error || '重新分析失敗')); return; }
@@ -732,8 +753,10 @@ function reanalyzeAll() {
             updateAnalyzeCard(0, d.total);
             showAnalyzing(true);
             document.getElementById('btnReanalyze').style.display = 'none';
+            document.getElementById('btnResume').style.display = 'none';
             document.getElementById('progressLog').innerHTML = '';
             addLog(`開始重新分析，共 ${d.total} 個 PCAP…`, 'text-info');
+            if (excludeIps) addLog(`排除 IP：${excludeIps}`, 'text-muted');
         })
         .catch(() => alert('請求失敗'));
 }

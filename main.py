@@ -80,6 +80,26 @@ capture_states: dict = {}
 capture_states_lock = threading.Lock()
 
 
+# ── 專案設定（persist exclude_ips 等，跨重啟保留）─────────────────
+def _load_project_settings(project_name: str) -> dict:
+    path = os.path.join(get_project_dir(project_name), 'project_settings.json')
+    if os.path.exists(path):
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+def _save_project_settings(project_name: str, data: dict):
+    existing = _load_project_settings(project_name)
+    existing.update(data)
+    path = os.path.join(get_project_dir(project_name), 'project_settings.json')
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(existing, f, ensure_ascii=False, indent=2)
+
+
 # ─────────────────────────────────────────────
 # 工具函式
 # ─────────────────────────────────────────────
@@ -489,7 +509,10 @@ def api_resume(project_name):
     if not remaining:
         return jsonify({'error': '所有 PCAP 已分析完成'}), 400
 
-    filter_ips = state.get('filter_ips', [])
+    # 優先用記憶體中的 filter_ips，否則從持久化設定讀取
+    filter_ips = state.get('filter_ips') or parse_filter_ips(
+        _load_project_settings(project_name).get('exclude_ips', '')
+    )
 
     with capture_states_lock:
         if project_name not in capture_states:
@@ -508,7 +531,6 @@ def api_resume(project_name):
                 args=(project_name, pcap_file, filter_ips),
                 daemon=True
             ).start()
-        # 等所有分析完成後發送 all_analysis_done
         for _ in range(300):
             with capture_states_lock:
                 rem = capture_states.get(project_name, {}).get('analyzing', 0)
@@ -529,15 +551,13 @@ def api_resume(project_name):
 
 @app.route('/api/capture/reanalyze/<project_name>', methods=['POST'])
 def api_reanalyze(project_name):
-    """刪除現有分析結果並重新分析所有 PCAP"""
+    """刪除現有分析結果並重新分析所有 PCAP；可透過 exclude_ips 更新排除列表"""
     project_dir = get_project_dir(project_name)
     pcap_dir    = get_pcap_dir(project_name)
 
-    # 確認專案存在
     if not os.path.isdir(project_dir):
         return jsonify({'error': '專案不存在'}), 404
 
-    # 確認沒有側錄或分析正在進行
     with capture_states_lock:
         state = capture_states.get(project_name, {})
     if state.get('status') == 'capturing':
@@ -549,6 +569,22 @@ def api_reanalyze(project_name):
     if not all_pcaps:
         return jsonify({'error': '沒有找到 PCAP 檔案'}), 400
 
+    # 若請求帶有 exclude_ips，更新持久化設定並重新解析
+    req_data = request.get_json(force=True) or {}
+    if 'exclude_ips' in req_data:
+        exclude_ips_str = req_data['exclude_ips'].strip()
+        _save_project_settings(project_name, {'exclude_ips': exclude_ips_str})
+        filter_ips = parse_filter_ips(exclude_ips_str)
+        # 同步到記憶體狀態
+        with capture_states_lock:
+            if project_name in capture_states:
+                capture_states[project_name]['filter_ips'] = filter_ips
+    else:
+        # 優先記憶體，否則從持久化設定讀取
+        filter_ips = state.get('filter_ips') or parse_filter_ips(
+            _load_project_settings(project_name).get('exclude_ips', '')
+        )
+
     # 清除舊的分析結果
     import shutil
     for f in glob.glob(os.path.join(project_dir, '*_analysis.json')):
@@ -558,16 +594,14 @@ def api_reanalyze(project_name):
     suricata_dir = os.path.join(project_dir, 'suricata')
     if os.path.isdir(suricata_dir):
         shutil.rmtree(suricata_dir)
-    # 清除 summary
+    # 清除 summary（但不清除 project_settings.json）
     for f in glob.glob(os.path.join(project_dir, '*.json')):
-        os.remove(f)
+        if os.path.basename(f) != 'project_settings.json':
+            os.remove(f)
 
-    filter_ips = state.get('filter_ips', [])
-
-    # 重置分析計數並啟動分析執行緒
     with capture_states_lock:
         if project_name not in capture_states:
-            capture_states[project_name] = {'status': 'stopped', 'packet_count': 0, 'analyzing': 0}
+            capture_states[project_name] = {'status': 'idle', 'packet_count': 0, 'analyzing': 0}
         capture_states[project_name]['analyzing'] = 0
 
     def _run_all():
@@ -577,11 +611,10 @@ def api_reanalyze(project_name):
                 args=(project_name, pcap_file, filter_ips),
                 daemon=True
             ).start()
-        # 等所有分析完成後發送 all_analysis_done
         for _ in range(300):
             with capture_states_lock:
-                remaining = capture_states.get(project_name, {}).get('analyzing', 0)
-            if remaining == 0:
+                rem = capture_states.get(project_name, {}).get('analyzing', 0)
+            if rem == 0:
                 break
             time.sleep(1)
         total = len(all_pcaps)
@@ -594,7 +627,18 @@ def api_reanalyze(project_name):
     threading.Thread(target=_run_all, daemon=True).start()
     return jsonify({'ok': True, 'total': len(all_pcaps)})
 
-@app.route('/')
+
+@app.route('/api/project/settings/<project_name>', methods=['GET'])
+def api_get_project_settings(project_name):
+    """回傳專案設定（目前排除 IP 等）"""
+    if not os.path.isdir(get_project_dir(project_name)):
+        return jsonify({'error': '專案不存在'}), 404
+    settings = _load_project_settings(project_name)
+    return jsonify({
+        'exclude_ips': settings.get('exclude_ips', ''),
+    })
+
+
 def index():
     tasks = get_tasks()
     return render_template('index.html', tasks=tasks)
@@ -714,8 +758,8 @@ def api_capture_start():
     # Build BPF filter
     base_filter = "(tcp or udp) and not broadcast and not multicast"
     if exclude_ips:
-        ip_parts = exclude_ips.split()
-        exclude_parts = " and ".join(f"not host {ip}" for ip in ip_parts if ip)
+        ip_parts = [p for p in exclude_ips.replace(',', ' ').replace(';', ' ').split() if p]
+        exclude_parts = " and ".join(f"not host {ip}" for ip in ip_parts)
         bpf_filter = f"{base_filter} and {exclude_parts}" if exclude_parts else base_filter
     else:
         bpf_filter = base_filter
@@ -747,6 +791,9 @@ def api_capture_start():
         return jsonify({'error': f'啟動 dumpcap 失敗：{e}'}), 500
 
     filter_ips = parse_filter_ips(exclude_ips)
+
+    # 持久化 exclude_ips（供重啟後 reanalyze/resume 使用）
+    _save_project_settings(project_name, {'exclude_ips': exclude_ips})
 
     with capture_states_lock:
         capture_states[project_name] = {
