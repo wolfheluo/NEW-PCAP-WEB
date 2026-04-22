@@ -639,6 +639,7 @@ def api_get_project_settings(project_name):
     })
 
 
+@app.route('/')
 def index():
     tasks = get_tasks()
     return render_template('index.html', tasks=tasks)
