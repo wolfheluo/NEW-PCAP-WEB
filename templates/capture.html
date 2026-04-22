@@ -104,10 +104,16 @@
             <h2 class="mb-0">
                 <span class="capture-led me-2" id="pageLed"></span>封包側錄 — {{ project_name }}
             </h2>
-            <button class="btn btn-outline-warning btn-sm" id="btnReanalyze"
-                    onclick="reanalyzeAll()" style="display:none">
-                <i class="fas fa-redo me-1"></i>重新分析
-            </button>
+            <div class="d-flex gap-2">
+                <button class="btn btn-outline-warning btn-sm" id="btnResume"
+                        onclick="resumeAnalysis()" style="display:none">
+                    <i class="fas fa-play me-1"></i>繼續分析
+                </button>
+                <button class="btn btn-outline-warning btn-sm" id="btnReanalyze"
+                        onclick="reanalyzeAll()" style="display:none">
+                    <i class="fas fa-redo me-1"></i>重新分析
+                </button>
+            </div>
         </div>
     </div>
 </div>
@@ -162,11 +168,16 @@
                     <i class="fas fa-hourglass-half fa-2x text-secondary mb-2"></i>
                     <p class="mb-0 fw-semibold text-secondary">待分析</p>
                 </div>
-                <!-- 分析中 -->
+                <!-- 分析中 / 分析中斷 -->
                 <div id="statusAnalyzing" class="d-none">
                     <i class="fas fa-spinner fa-spin fa-2x text-warning mb-2"></i>
                     <p class="mb-1 fw-semibold text-warning">分析中…</p>
                     <span class="badge bg-warning text-dark fs-6" id="analyzeProgress">0 / 0</span>
+                    <div class="mt-2">
+                        <button class="btn btn-danger btn-sm d-none" id="btnResumeCard" onclick="resumeAnalysis()">
+                            <i class="fas fa-play me-1"></i>繼續分析
+                        </button>
+                    </div>
                 </div>
                 <!-- 已完成 -->
                 <div id="statusDone" class="d-none">
@@ -240,6 +251,7 @@ let captureStartTime = null;
 let timerInterval = null;
 let currentPcapCount = 0;    // 追蹤目前已知的 PCAP 數量
 let currentAnalyzedCount = 0; // 追蹤目前已分析的 PCAP 數量
+let currentAnalyzingCount = 0; // 目前正在執行中的分析執行緒數
 let isCapturing = false;      // 目前是否正在側錄中
 
 // ─── 初始化 ───────────────────────────────────
@@ -326,8 +338,9 @@ function pollStatus() {
                     }
                 }
             }
-            currentPcapCount    = data.total_pcap_count ?? 0;
+            currentPcapCount     = data.total_pcap_count ?? 0;
             currentAnalyzedCount = data.analyzed_count ?? 0;
+            currentAnalyzingCount = data.analyzing ?? 0;
             updateAnalyzeCard(currentAnalyzedCount, currentPcapCount);
             if (data.analyzing > 0) showAnalyzing(true);
         })
@@ -335,16 +348,21 @@ function pollStatus() {
 }
 
 // ─── 分析狀態卡片 ─────────────────────────────
-// 切換 statusAnalyzing div 的外觀（橘色=分析中 / 灰色=待分析）
-function setAnalyzingStyle(isOrange) {
+// 切換 statusAnalyzing div 的外觀（orange=分析中 / grey=待分析 / interrupted=中斷）
+function setAnalyzingStyle(mode) {
     const icon  = document.querySelector('#statusAnalyzing i');
     const text  = document.querySelector('#statusAnalyzing p');
     const badge = document.getElementById('analyzeProgress');
-    if (isOrange) {
+    if (mode === true || mode === 'analyzing') {
         icon.className   = 'fas fa-spinner fa-spin fa-2x text-warning mb-2';
         text.className   = 'mb-1 fw-semibold text-warning';
         text.textContent = '分析中…';
         badge.className  = 'badge bg-warning text-dark fs-6';
+    } else if (mode === 'interrupted') {
+        icon.className   = 'fas fa-exclamation-triangle fa-2x text-danger mb-2';
+        text.className   = 'mb-1 fw-semibold text-danger';
+        text.textContent = '分析中斷';
+        badge.className  = 'badge bg-danger fs-6';
     } else {
         icon.className   = 'fas fa-hourglass-half fa-2x text-secondary mb-2';
         text.className   = 'mb-1 fw-semibold text-secondary';
@@ -359,10 +377,16 @@ function resetAnalyzeCard() {
 }
 
 function updateAnalyzeCard(analyzed, total) {
-    const pending   = document.getElementById('statusPending');
-    const analyzing = document.getElementById('statusAnalyzing');
-    const done      = document.getElementById('statusDone');
-    const card      = document.getElementById('doneCard');
+    const pending    = document.getElementById('statusPending');
+    const analyzing  = document.getElementById('statusAnalyzing');
+    const done       = document.getElementById('statusDone');
+    const card       = document.getElementById('doneCard');
+    const resumeCard = document.getElementById('btnResumeCard');
+    const resumeHdr  = document.getElementById('btnResume');
+    const reanalyze  = document.getElementById('btnReanalyze');
+
+    // 是否為「中斷」狀態：非側錄、尚有未分析的檔案、且沒有分析執行緒在跑
+    const isInterrupted = !isCapturing && total > 0 && analyzed < total && currentAnalyzingCount === 0;
 
     if (total > 0 && analyzed >= total) {
         if (isCapturing) {
@@ -373,6 +397,8 @@ function updateAnalyzeCard(analyzed, total) {
             done.classList.add('d-none');
             setAnalyzingStyle(false);
             document.getElementById('analyzeProgress').textContent = `${analyzed} / ${total}`;
+            if (resumeCard) resumeCard.classList.add('d-none');
+            if (resumeHdr)  resumeHdr.style.display = 'none';
         } else {
             // 非側錄，全部完成 → 綠色「分析完成」
             card.className = 'card mt-3 border-success';
@@ -380,22 +406,39 @@ function updateAnalyzeCard(analyzed, total) {
             analyzing.classList.add('d-none');
             done.classList.remove('d-none');
             document.getElementById('analyzeProgressDone').textContent = `${analyzed} / ${total}`;
-            document.getElementById('btnReanalyze').style.display = '';
+            if (resumeCard) resumeCard.classList.add('d-none');
+            if (resumeHdr)  resumeHdr.style.display = 'none';
+            if (reanalyze)  reanalyze.style.display = '';
         }
+    } else if (isInterrupted) {
+        // 分析中斷 → 紅色警示 + 「繼續分析」按鈕
+        card.className = 'card mt-3 border-danger';
+        pending.classList.add('d-none');
+        analyzing.classList.remove('d-none');
+        done.classList.add('d-none');
+        setAnalyzingStyle('interrupted');
+        document.getElementById('analyzeProgress').textContent = `${analyzed} / ${total}`;
+        if (resumeCard) resumeCard.classList.remove('d-none');
+        if (resumeHdr)  resumeHdr.style.display = '';
+        if (reanalyze)  reanalyze.style.display = '';
     } else if (total > 0) {
-        // 有未分析的 PCAP → 橘色「分析中 N/M」
+        // 有未分析的 PCAP 且正在分析 → 橘色「分析中 N/M」
         card.className = 'card mt-3 border-warning';
         pending.classList.add('d-none');
         analyzing.classList.remove('d-none');
         done.classList.add('d-none');
         setAnalyzingStyle(true);
         document.getElementById('analyzeProgress').textContent = `${analyzed} / ${total}`;
+        if (resumeCard) resumeCard.classList.add('d-none');
+        if (resumeHdr)  resumeHdr.style.display = 'none';
     } else {
         // 尚未開始 → 灰色「待分析」
         card.className = 'card mt-3 border-secondary';
         pending.classList.remove('d-none');
         analyzing.classList.add('d-none');
         done.classList.add('d-none');
+        if (resumeCard) resumeCard.classList.add('d-none');
+        if (resumeHdr)  resumeHdr.style.display = 'none';
     }
 }
 
@@ -599,6 +642,7 @@ socket.on('capture_stopped', data => {
         .then(r => r.json())
         .then(d => {
             updateStats(d);
+            currentAnalyzingCount = d.analyzing ?? 0;
             updateAnalyzeCard(d.analyzed_count ?? 0, d.total_pcap_count ?? 0);
         })
         .catch(() => {});
@@ -606,6 +650,7 @@ socket.on('capture_stopped', data => {
 
 socket.on('analysis_progress', data => {
     if (data.project !== PROJECT_NAME) return;
+    currentAnalyzingCount = Math.max(currentAnalyzingCount, 1); // 正在收到事件，至少有 1 個執行緒
     showAnalyzing(true);
     setProgress(data.percent);
     // 更新分析狀態卡片（一有資料即變橘色）
@@ -636,6 +681,7 @@ socket.on('analysis_complete', data => {
 
 socket.on('all_analysis_done', data => {
     if (data.project !== PROJECT_NAME) return;
+    currentAnalyzingCount = 0;
     addLog(`所有分析完成！(${data.analyzed}/${data.total})`, 'log-complete');
     setProgress(100);
     showAnalyzing(false, true);   // 停止動畫、進度條變綠
@@ -647,6 +693,26 @@ socket.on('analysis_error', data => {
     addLog('分析發生錯誤：' + data.error, 'log-error');
     showAnalyzing(false);
 });
+
+// ─── 繼續分析（中斷後恢復）──────────────────────
+function resumeAnalysis() {
+    fetch(`/api/capture/resume/${PROJECT_NAME}`, { method: 'POST' })
+        .then(r => r.json())
+        .then(d => {
+            if (!d.ok) { alert('錯誤：' + (d.error || '繼續分析失敗')); return; }
+            currentAnalyzingCount = d.remaining;
+            document.getElementById('btnResumeCard')?.classList.add('d-none');
+            document.getElementById('btnResume').style.display = 'none';
+            setProgress(0);
+            const fill = document.getElementById('progressFill');
+            fill.classList.add('progress-bar-striped', 'progress-bar-animated');
+            fill.classList.remove('bg-success');
+            updateAnalyzeCard(currentAnalyzedCount, currentPcapCount);
+            showAnalyzing(true);
+            addLog(`繼續分析，尚有 ${d.remaining} 個 PCAP 待處理…`, 'text-info');
+        })
+        .catch(() => alert('請求失敗'));
+}
 
 // ─── 重新分析 ───────────────────────────────
 function reanalyzeAll() {
@@ -662,6 +728,7 @@ function reanalyzeAll() {
             fill.classList.remove('bg-success');
             currentAnalyzedCount = 0;
             currentPcapCount = d.total;
+            currentAnalyzingCount = d.total;
             updateAnalyzeCard(0, d.total);
             showAnalyzing(true);
             document.getElementById('btnReanalyze').style.display = 'none';

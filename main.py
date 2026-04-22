@@ -461,6 +461,72 @@ def _watch_pcap_files(project_name, pcap_dir, filter_ips):
 # 頁面路由
 # ─────────────────────────────────────────────
 
+@app.route('/api/capture/resume/<project_name>', methods=['POST'])
+def api_resume(project_name):
+    """僅分析尚未完成的 PCAP 檔案（用於程式中斷後繼續分析）"""
+    project_dir = get_project_dir(project_name)
+    pcap_dir    = get_pcap_dir(project_name)
+
+    if not os.path.isdir(project_dir):
+        return jsonify({'error': '專案不存在'}), 404
+
+    with capture_states_lock:
+        state = capture_states.get(project_name, {})
+    if state.get('status') == 'capturing':
+        return jsonify({'error': '側錄進行中，請先停止側錄'}), 400
+    if state.get('analyzing', 0) > 0:
+        return jsonify({'error': '分析進行中，請稍後再試'}), 400
+
+    # 找出尚未分析的 PCAP（沒有對應 _analysis.json）
+    all_pcaps = sorted(glob.glob(os.path.join(pcap_dir, '*.pcap')))
+    remaining = []
+    for pcap_file in all_pcaps:
+        stem = Path(pcap_file).stem
+        analysis_out = os.path.join(project_dir, f"{stem}_analysis.json")
+        if not os.path.exists(analysis_out):
+            remaining.append(pcap_file)
+
+    if not remaining:
+        return jsonify({'error': '所有 PCAP 已分析完成'}), 400
+
+    filter_ips = state.get('filter_ips', [])
+
+    with capture_states_lock:
+        if project_name not in capture_states:
+            capture_states[project_name] = {
+                'status': 'idle',
+                'packet_count': 0,
+                'analyzing': 0,
+                'filter_ips': filter_ips,
+            }
+        capture_states[project_name]['analyzing'] = 0
+
+    def _run_remaining():
+        for pcap_file in remaining:
+            threading.Thread(
+                target=_analyze_single_pcap,
+                args=(project_name, pcap_file, filter_ips),
+                daemon=True
+            ).start()
+        # 等所有分析完成後發送 all_analysis_done
+        for _ in range(300):
+            with capture_states_lock:
+                rem = capture_states.get(project_name, {}).get('analyzing', 0)
+            if rem == 0:
+                break
+            time.sleep(1)
+        total = len(all_pcaps)
+        analyzed = len(glob.glob(os.path.join(project_dir, '*_analysis.json')))
+        socketio.emit('all_analysis_done', {
+            'project': project_name,
+            'analyzed': analyzed, 'total': total,
+        })
+
+    threading.Thread(target=_run_remaining, daemon=True).start()
+    _append_capture_log(project_name, f'繼續分析，尚有 {len(remaining)} 個 PCAP 待處理…', 'start')
+    return jsonify({'ok': True, 'remaining': len(remaining)})
+
+
 @app.route('/api/capture/reanalyze/<project_name>', methods=['POST'])
 def api_reanalyze(project_name):
     """刪除現有分析結果並重新分析所有 PCAP"""
