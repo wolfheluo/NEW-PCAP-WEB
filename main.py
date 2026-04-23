@@ -45,6 +45,7 @@ SETTING_FILE = "settings.json"
 PCAP_SPLIT_SIZE_KB = 204800  # 預設 200 MB
 CHECKSUM_OFFLOAD   = False   # NIC Checksum Offload，啟用則加 -k none
 MAX_CONCURRENT_ANALYSIS = 2  # 同時分析的 PCAP 上限（預設 2）
+DELETE_SAFE_PCAP      = False  # 分析後自動刪除無 P1/P2 告警的 PCAP
 
 os.makedirs(PROJECT_DIR, exist_ok=True)
 
@@ -74,6 +75,8 @@ if 'checksum_offload' in _cfg:
     CHECKSUM_OFFLOAD = bool(_cfg['checksum_offload'])
 if 'max_concurrent_analysis' in _cfg:
     MAX_CONCURRENT_ANALYSIS = max(0, int(_cfg['max_concurrent_analysis']))
+if 'delete_safe_pcap' in _cfg:
+    DELETE_SAFE_PCAP = bool(_cfg['delete_safe_pcap'])
 
 os.makedirs(PROJECT_DIR, exist_ok=True)
 
@@ -351,6 +354,21 @@ def _append_capture_log(project_name: str, msg: str, stage: str = ''):
         pass
 
 
+def _pcap_has_alerts(suricata_out_dir: str) -> bool:
+    """檢查單一 PCAP 的 Suricata fast.log 是否含有 P1/P2 告警（無告警 = 無風險）"""
+    fast_log = os.path.join(suricata_out_dir, 'fast.log')
+    if not os.path.exists(fast_log):
+        return False
+    try:
+        with open(fast_log, 'r', encoding='utf-8', errors='ignore') as f:
+            for line in f:
+                if '[**]' in line and ('Priority: 1' in line or 'Priority: 2' in line):
+                    return True
+    except Exception:
+        return True  # 讀取失敗時保守處理，不刪除
+    return False
+
+
 def _analyze_single_pcap(project_name, pcap_file, filter_ips):
     """對單一 PCAP 執行 Suricata + TShark 分析並推送進度"""
     project_dir = get_project_dir(project_name)
@@ -425,6 +443,16 @@ def _analyze_single_pcap_inner(project_name, pcap_file, filter_ips,
             'analyzed': analyzed, 'total': total_pcap,
         })
         _append_capture_log(project_name, f'完成分析 ({analyzed}/{total_pcap})：{fname}', 'done')
+
+        # 自動刪除無風險 PCAP（需設定啟用且 Suricata 無 P1/P2 告警）
+        if DELETE_SAFE_PCAP:
+            suricata_out_dir = os.path.join(project_dir, 'suricata', pcap_stem)
+            if not _pcap_has_alerts(suricata_out_dir):
+                try:
+                    os.remove(pcap_file)
+                    _append_capture_log(project_name, f'已刪除無風險 PCAP：{fname}', 'cleanup')
+                except Exception as _del_err:
+                    _append_capture_log(project_name, f'刪除無風險 PCAP 失敗：{_del_err}', 'error')
 
     except Exception as e:
         socketio.emit('analysis_error', {'project': project_name, 'error': str(e)})
@@ -1152,12 +1180,13 @@ def api_settings_get_config():
         'project_dir':            cfg.get('project_dir', ''),
         'checksum_offload':       cfg.get('checksum_offload', False),
         'max_concurrent_analysis': cfg.get('max_concurrent_analysis', MAX_CONCURRENT_ANALYSIS),
+        'delete_safe_pcap':       cfg.get('delete_safe_pcap', DELETE_SAFE_PCAP),
     })
 
 
 @app.route('/api/settings/config', methods=['POST'])
 def api_settings_save_config():
-    global PCAP_SPLIT_SIZE_KB, PROJECT_DIR, CHECKSUM_OFFLOAD, MAX_CONCURRENT_ANALYSIS, _analysis_semaphore
+    global PCAP_SPLIT_SIZE_KB, PROJECT_DIR, CHECKSUM_OFFLOAD, MAX_CONCURRENT_ANALYSIS, _analysis_semaphore, DELETE_SAFE_PCAP
     data = request.get_json(force=True)
     save = {}
 
@@ -1202,9 +1231,14 @@ def api_settings_save_config():
         except (ValueError, TypeError):
             pass
 
+    # 自動刪除無風險 PCAP
+    DELETE_SAFE_PCAP = bool(data.get('delete_safe_pcap', False))
+    save['delete_safe_pcap'] = DELETE_SAFE_PCAP
+
     _save_settings(save)
     return jsonify({'ok': True, 'pcap_split_mb': save['pcap_split_mb'], 'project_dir': PROJECT_DIR,
-                    'checksum_offload': CHECKSUM_OFFLOAD, 'max_concurrent_analysis': MAX_CONCURRENT_ANALYSIS})
+                    'checksum_offload': CHECKSUM_OFFLOAD, 'max_concurrent_analysis': MAX_CONCURRENT_ANALYSIS,
+                    'delete_safe_pcap': DELETE_SAFE_PCAP})
 
 
 @app.route('/api/settings/check')

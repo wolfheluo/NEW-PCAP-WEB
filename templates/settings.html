@@ -103,7 +103,25 @@
                            min="0" max="16" step="1" value="2">
                 </div>
             </div>
-
+            <!-- 自動刪除無風險 PCAP -->
+            <div class="col-md-6">
+                <div class="p-3 border rounded h-100">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <div class="fw-semibold mb-1">自動刪除無風險 PCAP</div>
+                            <div class="text-muted small">
+                                分析完成後，若 Suricata 未對該 PCAP 發出任何
+                                <strong>P1 / P2 告警</strong>，
+                                則自動刪除該 .pcap 檔以節省磁碟空間。
+                                分析結果（JSON）將保留。
+                            </div>
+                        </div>
+                        <div class="form-check form-switch ms-3 mt-1 flex-shrink-0">
+                            <input class="form-check-input" type="checkbox" id="input-delete-safe-pcap" role="switch">
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- 儲存按鈕 -->
@@ -187,9 +205,10 @@ fetch('/api/settings/config')
         }
         document.getElementById('input-project-dir').value = d.project_dir || '';
         document.getElementById('input-checksum-offload').checked = !!d.checksum_offload;
-        if (d.max_concurrent_analysis) {
+        if (d.max_concurrent_analysis !== undefined) {
             document.getElementById('input-max-concurrent').value = d.max_concurrent_analysis;
         }
+        document.getElementById('input-delete-safe-pcap').checked = !!d.delete_safe_pcap;
     });
 
 // ── 儲存設定 ──────────────────────────────────────
@@ -217,13 +236,14 @@ document.getElementById('btn-save-config').addEventListener('click', function ()
             project_dir:             projectDir,
             checksum_offload:        document.getElementById('input-checksum-offload').checked,
             max_concurrent_analysis: mca,
+            delete_safe_pcap:        document.getElementById('input-delete-safe-pcap').checked,
         })
     })
     .then(r => r.json())
     .then(d => {
         if (d.ok) {
             const dirMsg = d.project_dir ? `「${d.project_dir}」` : '預設路徑';
-            msgEl.textContent = `✔ 已儲存（${d.pcap_split_mb} MB，${dirMsg}，同時分析 ${ d.max_concurrent_analysis === 0 ? '不限制' : d.max_concurrent_analysis + ' 個' }）`;
+            msgEl.textContent = `✔ 已儲存（${d.pcap_split_mb} MB，${dirMsg}，同時分析 ${ d.max_concurrent_analysis === 0 ? '不限制' : d.max_concurrent_analysis + ' 個' }，無風險 PCAP ${ d.delete_safe_pcap ? '自動刪除' : '保留' }）`;
             msgEl.className = 'text-success fw-semibold small';
         } else {
             msgEl.textContent = '✘ ' + (d.error || '儲存失敗');
