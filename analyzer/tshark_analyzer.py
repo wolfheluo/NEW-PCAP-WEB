@@ -27,15 +27,56 @@ except ImportError:
     GEOIP_AVAILABLE = False
 
 
+class IpFilterSet:
+    """
+    IP 過濾集合，同時支援單個 IP 精確比對與任意大小 CIDR 網段比對。
+    實作 __contains__、__bool__、__len__、__iter__ 以相容現有呼叫端（in、not、list()、len()）。
+    """
+    __slots__ = ('_ips', '_networks', '_raw')
+
+    def __init__(self):
+        self._ips: set = set()
+        self._networks: list = []
+        self._raw: list = []
+
+    def add_ip(self, ip_str: str):
+        self._ips.add(ip_str)
+        self._raw.append(ip_str)
+
+    def add_network(self, net):
+        self._networks.append(net)
+        self._raw.append(str(net))
+
+    def __bool__(self):
+        return bool(self._ips or self._networks)
+
+    def __len__(self):
+        return len(self._ips) + len(self._networks)
+
+    def __contains__(self, ip_str):
+        if not ip_str:
+            return False
+        if ip_str in self._ips:
+            return True
+        try:
+            ip_obj = ipaddress.ip_address(ip_str)
+            return any(ip_obj in net for net in self._networks)
+        except ValueError:
+            return False
+
+    def __iter__(self):
+        return iter(self._raw)
+
+
 # ─────────────────────────────────────────────
 # 工具函式
 # ─────────────────────────────────────────────
 
 def parse_filter_ips(ip_input):
-    """解析使用者輸入的 IP 列表（支援單個 IP、空格/逗號分隔、CIDR）"""
-    filter_ips = set()
+    """解析使用者輸入的 IP 列表（支援單個 IP、空格/逗號分隔、任意大小 CIDR）"""
+    result = IpFilterSet()
     if not ip_input or ip_input.strip() == "":
-        return filter_ips
+        return result
 
     ip_parts = ip_input.replace(',', ' ').replace(';', ' ').split()
     for ip_part in ip_parts:
@@ -44,19 +85,13 @@ def parse_filter_ips(ip_input):
             continue
         try:
             if '/' in ip_part:
-                network = ipaddress.ip_network(ip_part, strict=False)
-                if network.num_addresses <= 256:
-                    for ip in network.hosts():
-                        filter_ips.add(str(ip))
-                    filter_ips.add(str(network.network_address))
-                    filter_ips.add(str(network.broadcast_address))
-                else:
-                    filter_ips.add(str(network.network_address))
+                # 所有大小的 CIDR 一律存為 network 物件，由 IpFilterSet.__contains__ 做成員判斷
+                result.add_network(ipaddress.ip_network(ip_part, strict=False))
             else:
-                filter_ips.add(str(ipaddress.ip_address(ip_part)))
+                result.add_ip(str(ipaddress.ip_address(ip_part)))
         except ValueError:
             print(f"無效的 IP: {ip_part}")
-    return filter_ips
+    return result
 
 
 def should_filter_connection(src_ip, dst_ip, filter_ips):
@@ -314,8 +349,9 @@ def analyze_ip_traffic(tshark_exe, pcap_file, filter_ips=None):
 
 
 def analyze_protocols(tshark_exe, pcap_file, filter_ips=None):
+    # 注意：TShark 的 frame.protocols 輸出 'tls'，不會出現 'https'，故移除 'HTTPS' 避免永遠空白
     target_protocols = {'DNS', 'DHCP', 'SMTP', 'TCP', 'TLS', 'SNMP',
-                        'HTTP', 'FTP', 'SMB3', 'SMB2', 'SMB', 'HTTPS', 'ICMP'}
+                        'HTTP', 'FTP', 'SMB3', 'SMB2', 'SMB', 'ICMP'}
 
     fields = ["frame.protocols", "ip.src", "ip.dst", "frame.len"]
     lines = run_tshark_command(tshark_exe, pcap_file, fields)
@@ -417,18 +453,23 @@ def analyze_ip_countries(tshark_exe, pcap_file, geo_reader, filter_ips=None):
             if should_filter_connection(src_ip, dst_ip, filter_ips):
                 continue
 
-            if src_ip:
-                primary_src = parse_multiple_values(src_ip, "ip")
-                if primary_src:
-                    code = get_country_code(geo_reader, primary_src)
-                    if code:
-                        country_bytes[code] += frame_len
-            if dst_ip:
-                primary_dst = parse_multiple_values(dst_ip, "ip")
-                if primary_dst:
-                    code = get_country_code(geo_reader, primary_dst)
-                    if code:
-                        country_bytes[code] += frame_len
+            primary_src = parse_multiple_values(src_ip, "ip") if src_ip else None
+            primary_dst = parse_multiple_values(dst_ip, "ip") if dst_ip else None
+
+            src_code = get_country_code(geo_reader, primary_src) if primary_src else None
+            dst_code = get_country_code(geo_reader, primary_dst) if primary_dst else None
+
+            # 每個封包只記錄一次，優先歸屬給外部（非 LOCAL）那一端，避免雙重計算
+            if src_code and dst_code:
+                if src_code == 'LOCAL' and dst_code != 'LOCAL':
+                    country_bytes[dst_code] += frame_len
+                else:
+                    country_bytes[src_code] += frame_len
+            elif src_code:
+                country_bytes[src_code] += frame_len
+            elif dst_code:
+                country_bytes[dst_code] += frame_len
+
         except (ValueError, IndexError):
             continue
 
@@ -519,7 +560,8 @@ def merge_all_results(project_dir, filter_ips=None):
     }
     merged_top_ip = defaultdict(int)
     merged_top_ip_time_stats = defaultdict(lambda: defaultdict(int))
-    merged_top_ip_protocols = {}
+    # 用投票方式决定協定：connection -> {protocol: vote_count}
+    merged_top_ip_protocol_votes = defaultdict(lambda: defaultdict(int))
     merged_events = {}
     merged_geo = defaultdict(int)
 
@@ -545,15 +587,16 @@ def merge_all_results(project_dir, filter_ips=None):
             connection = conn_info['connection']
             merged_top_ip[connection] += conn_info['bytes']
             if 'protocol' in conn_info:
-                merged_top_ip_protocols[connection] = conn_info['protocol']
+                # 累積投票，不直接覆蓋，避免不同 PCAP 檔標記不一致時產生錯誤
+                merged_top_ip_protocol_votes[connection][conn_info['protocol']] += 1
             for period_info in conn_info.get('top_3_time_periods', []):
                 merged_top_ip_time_stats[connection][period_info['time_period']] += period_info['bytes']
 
         for protocol, protocol_data in result['event'].items():
             if protocol not in merged_events:
                 merged_events[protocol] = {
-                    'count': 0, 'top_ip': protocol_data['top_ip'],
-                    'ip_stats': defaultdict(int),
+                    'count': 0,
+                    'ip_traffic': defaultdict(int),  # ip -> 累計 packet_size，用於重算 top_ip
                     'connections': defaultdict(lambda: {'packet_count': 0, 'packet_size': 0})
                 }
             merged_events[protocol]['count'] += protocol_data['count']
@@ -561,6 +604,9 @@ def merge_all_results(project_dir, filter_ips=None):
                 conn_key = f"{stat['src_ip']} -> {stat['dst_ip']}"
                 merged_events[protocol]['connections'][conn_key]['packet_count'] += stat['packet_count']
                 merged_events[protocol]['connections'][conn_key]['packet_size'] += stat['packet_size']
+                # 累積兩端 IP 的流量，稍後重算 top_ip
+                merged_events[protocol]['ip_traffic'][stat['src_ip']] += stat['packet_size']
+                merged_events[protocol]['ip_traffic'][stat['dst_ip']] += stat['packet_size']
 
         for country_code, bytes_val in result['geo'].items():
             merged_geo[country_code] += bytes_val
@@ -572,14 +618,18 @@ def merge_all_results(project_dir, filter_ips=None):
         top_time_periods = sorted(time_stats.items(), key=lambda x: x[1], reverse=True)[:3]
         top_periods_info = []
         for i, (time_period, period_bytes) in enumerate(top_time_periods, 1):
-            pct = (period_bytes / merged_flow['total_bytes'] * 100) if merged_flow['total_bytes'] > 0 else 0
+            # 百分比以該連線自身的總流量為基準，表示「此時段占此連線整體的 X%」
+            pct = (period_bytes / total_bytes * 100) if total_bytes > 0 else 0
             top_periods_info.append({
                 'rank': i, 'time_period': time_period,
                 'bytes': period_bytes, 'percentage_of_total': round(pct, 2)
             })
+        # 以多數決選定協定，避免最後一個 PCAP 覆蓋前面所有檔的結果
+        protocol_votes = merged_top_ip_protocol_votes.get(connection, {})
+        protocol = max(protocol_votes.items(), key=lambda x: x[1])[0] if protocol_votes else 'UNKNOWN'
         top_connections.append({
             'connection': connection, 'bytes': total_bytes,
-            'protocol': merged_top_ip_protocols.get(connection, 'UNKNOWN'),
+            'protocol': protocol,
             'top_3_time_periods': top_periods_info
         })
 
@@ -595,8 +645,11 @@ def merge_all_results(project_dir, filter_ips=None):
                 'packet_size': conn_stats['packet_size']
             })
         connections_list.sort(key=lambda x: x['packet_size'], reverse=True)
+        # 依合併的 ip_traffic 重算 top_ip，不再取第一個 PCAP 的僖存値
+        ip_traffic = data.get('ip_traffic', {})
+        top_ip = max(ip_traffic.items(), key=lambda x: x[1])[0] if ip_traffic else ''
         final_events[protocol] = {
-            'count': data['count'], 'top_ip': data['top_ip'],
+            'count': data['count'], 'top_ip': top_ip,
             'detailed_stats': connections_list[:5]
         }
 
