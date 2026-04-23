@@ -103,6 +103,11 @@
             <i class="fas fa-shield-alt me-1"></i>異常警示
         </button>
     </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="eve-tab" data-bs-toggle="tab" data-bs-target="#eve" type="button" role="tab">
+            <i class="fas fa-search me-1"></i>DNS/HTTP 事件
+        </button>
+    </li>
 </ul>
 </div><!-- /.nav-tabs-scrollable -->
 
@@ -384,6 +389,115 @@
             </div>
         </div>
     </div>
+
+    <!-- DNS/HTTP 事件 -->
+    <div class="tab-pane fade" id="eve" role="tabpanel">
+        <!-- 統計概覽 -->
+        <div class="row mb-3" id="eveSummaryCards">
+            <!-- 由 JS 填入 -->
+        </div>
+
+        <div class="row">
+            <!-- DNS Top 域名 -->
+            <div class="col-lg-6 mb-4">
+                <div class="card h-100">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0"><i class="fas fa-globe me-2"></i>Top DNS 查詢域名</h5>
+                        <span class="badge bg-secondary" id="dnsDomainCount">0</span>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive" style="max-height:400px;overflow-y:auto;">
+                            <table class="table table-sm table-striped table-hover mb-0">
+                                <thead class="table-light sticky-top">
+                                    <tr><th>#</th><th>域名</th><th class="text-end">查詢次數</th></tr>
+                                </thead>
+                                <tbody id="dnsTopTable"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- DNS Top 查詢來源 -->
+            <div class="col-lg-6 mb-4">
+                <div class="card h-100">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="fas fa-network-wired me-2"></i>Top DNS 查詢來源 IP</h5>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive" style="max-height:400px;overflow-y:auto;">
+                            <table class="table table-sm table-striped table-hover mb-0">
+                                <thead class="table-light sticky-top">
+                                    <tr><th>#</th><th>來源 IP</th><th class="text-end">查詢次數</th></tr>
+                                </thead>
+                                <tbody id="dnsClientTable"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- HTTP Top 主機 -->
+            <div class="col-lg-6 mb-4">
+                <div class="card h-100">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0"><i class="fas fa-server me-2"></i>Top HTTP 主機名稱</h5>
+                        <span class="badge bg-secondary" id="httpHostCount">0</span>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive" style="max-height:400px;overflow-y:auto;">
+                            <table class="table table-sm table-striped table-hover mb-0">
+                                <thead class="table-light sticky-top">
+                                    <tr><th>#</th><th>主機名稱</th><th class="text-end">請求次數</th></tr>
+                                </thead>
+                                <tbody id="httpHostTable"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- DNS 原始記錄樣本 -->
+            <div class="col-lg-6 mb-4">
+                <div class="card h-100">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0"><i class="fas fa-list me-2"></i>DNS 原始記錄（最多 500 筆）</h5>
+                        <button class="btn btn-sm btn-outline-secondary" onclick="toggleDnsSample()">展開 / 收合</button>
+                    </div>
+                    <div class="card-body p-0" id="dnsSampleWrapper" style="display:none;">
+                        <div class="table-responsive" style="max-height:400px;overflow-y:auto;">
+                            <table class="table table-sm table-striped mb-0">
+                                <thead class="table-light sticky-top">
+                                    <tr><th>時間</th><th>來源</th><th>域名</th><th>類型</th></tr>
+                                </thead>
+                                <tbody id="dnsSampleTable"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- HTTP 原始記錄樣本 -->
+            <div class="col-12 mb-4">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0"><i class="fas fa-exchange-alt me-2"></i>HTTP 原始記錄（最多 500 筆）</h5>
+                        <button class="btn btn-sm btn-outline-secondary" onclick="toggleHttpSample()">展開 / 收合</button>
+                    </div>
+                    <div class="card-body p-0" id="httpSampleWrapper" style="display:none;">
+                        <div class="table-responsive" style="max-height:400px;overflow-y:auto;">
+                            <table class="table table-sm table-striped mb-0">
+                                <thead class="table-light sticky-top">
+                                    <tr><th>時間</th><th>來源</th><th>主機</th><th>URL</th><th>方法</th><th>狀態</th></tr>
+                                </thead>
+                                <tbody id="httpSampleTable"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
 
 
@@ -433,7 +547,8 @@ async function loadAllData() {
             loadTopIpData(),
             loadGeoData(),
             loadEventData(),
-            loadAnomalyData()
+            loadAnomalyData(),
+            loadEveData()
         ]);
     } catch (error) {
         console.error('載入資料失敗:', error);
@@ -1613,6 +1728,138 @@ function escapeHtml(text) {
     div.textContent = text;
     return div.innerHTML;
 }
+
+// ─── DNS/HTTP 事件（eve.json）──────────────────────────────────────
+async function loadEveData() {
+    try {
+        const response = await fetch(`/api/eve/${taskName}`);
+        if (!response.ok) {
+            // eve_summary.json 不存在（舊資料未重新分析），靜默跳過
+            document.getElementById('eveSummaryCards').innerHTML =
+                `<div class="col-12"><div class="alert alert-info">
+                    <i class="fas fa-info-circle me-2"></i>
+                    尚無 DNS/HTTP 事件摘要。請點選「重新分析」以生成此資料。
+                </div></div>`;
+            return;
+        }
+        const data = await response.json();
+
+        // 統計概覽卡片
+        document.getElementById('eveSummaryCards').innerHTML = `
+            <div class="col-lg-3 col-md-6 mb-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <i class="fas fa-globe fa-2x text-primary mb-2"></i>
+                        <h4>${(data.total_dns_queries || 0).toLocaleString()}</h4>
+                        <p class="text-muted mb-0">DNS 查詢總數</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-3 col-md-6 mb-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <i class="fas fa-sitemap fa-2x text-info mb-2"></i>
+                        <h4>${(data.unique_dns_domains || 0).toLocaleString()}</h4>
+                        <p class="text-muted mb-0">唯一 DNS 域名</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-3 col-md-6 mb-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <i class="fas fa-exchange-alt fa-2x text-success mb-2"></i>
+                        <h4>${(data.total_http_requests || 0).toLocaleString()}</h4>
+                        <p class="text-muted mb-0">HTTP 請求總數</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-3 col-md-6 mb-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <i class="fas fa-server fa-2x text-warning mb-2"></i>
+                        <h4>${(data.unique_http_hosts || 0).toLocaleString()}</h4>
+                        <p class="text-muted mb-0">唯一 HTTP 主機</p>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // DNS Top 域名
+        const dnsTop = data.top_dns_queries || [];
+        document.getElementById('dnsDomainCount').textContent = dnsTop.length;
+        document.getElementById('dnsTopTable').innerHTML = dnsTop.length === 0
+            ? '<tr><td colspan="3" class="text-center text-muted">無資料</td></tr>'
+            : dnsTop.map((d, i) => `
+                <tr>
+                    <td><span class="badge ${i < 3 ? 'bg-warning' : 'bg-secondary'}">${i + 1}</span></td>
+                    <td class="text-break"><code>${escapeHtml(d.rrname)}</code></td>
+                    <td class="text-end"><span class="badge bg-primary">${d.count.toLocaleString()}</span></td>
+                </tr>`).join('');
+
+        // DNS Top 客戶端
+        const dnsClients = data.top_dns_clients || [];
+        document.getElementById('dnsClientTable').innerHTML = dnsClients.length === 0
+            ? '<tr><td colspan="3" class="text-center text-muted">無資料</td></tr>'
+            : dnsClients.map((d, i) => `
+                <tr>
+                    <td><span class="badge ${i < 3 ? 'bg-warning' : 'bg-secondary'}">${i + 1}</span></td>
+                    <td><code>${escapeHtml(d.src_ip)}</code></td>
+                    <td class="text-end"><span class="badge bg-info">${d.count.toLocaleString()}</span></td>
+                </tr>`).join('');
+
+        // HTTP Top 主機
+        const httpHosts = data.top_http_hosts || [];
+        document.getElementById('httpHostCount').textContent = httpHosts.length;
+        document.getElementById('httpHostTable').innerHTML = httpHosts.length === 0
+            ? '<tr><td colspan="3" class="text-center text-muted">無資料</td></tr>'
+            : httpHosts.map((h, i) => `
+                <tr>
+                    <td><span class="badge ${i < 3 ? 'bg-warning' : 'bg-secondary'}">${i + 1}</span></td>
+                    <td class="text-break"><code>${escapeHtml(h.hostname)}</code></td>
+                    <td class="text-end"><span class="badge bg-success">${h.count.toLocaleString()}</span></td>
+                </tr>`).join('');
+
+        // DNS 原始樣本
+        const dnsSample = data.dns_sample || [];
+        document.getElementById('dnsSampleTable').innerHTML = dnsSample.length === 0
+            ? '<tr><td colspan="4" class="text-center text-muted">無資料</td></tr>'
+            : dnsSample.map(d => `
+                <tr>
+                    <td class="text-nowrap"><small>${escapeHtml(d.timestamp ? d.timestamp.slice(0, 19) : '')}</small></td>
+                    <td><code>${escapeHtml(d.src_ip || '')}</code></td>
+                    <td class="text-break"><small>${escapeHtml(d.rrname || '')}</small></td>
+                    <td><span class="badge bg-secondary">${escapeHtml(d.rrtype || '')}</span></td>
+                </tr>`).join('');
+
+        // HTTP 原始樣本
+        const httpSample = data.http_sample || [];
+        document.getElementById('httpSampleTable').innerHTML = httpSample.length === 0
+            ? '<tr><td colspan="6" class="text-center text-muted">無資料</td></tr>'
+            : httpSample.map(h => `
+                <tr>
+                    <td class="text-nowrap"><small>${escapeHtml(h.timestamp ? h.timestamp.slice(0, 19) : '')}</small></td>
+                    <td><code>${escapeHtml(h.src_ip || '')}</code></td>
+                    <td class="text-break"><small>${escapeHtml(h.hostname || '')}</small></td>
+                    <td class="text-break" style="max-width:200px;"><small>${escapeHtml(h.url || '')}</small></td>
+                    <td><span class="badge bg-primary">${escapeHtml(h.method || '')}</span></td>
+                    <td><span class="badge ${h.status >= 400 ? 'bg-danger' : 'bg-success'}">${escapeHtml(String(h.status || ''))}</span></td>
+                </tr>`).join('');
+
+    } catch (err) {
+        console.error('載入 eve 資料失敗:', err);
+    }
+}
+
+function toggleDnsSample() {
+    const el = document.getElementById('dnsSampleWrapper');
+    el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+function toggleHttpSample() {
+    const el = document.getElementById('httpSampleWrapper');
+    el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+// ──────────────────────────────────────────────────────────────────
 
 // 頁面載入完成後執行
 document.addEventListener('DOMContentLoaded', function() {

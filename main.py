@@ -26,7 +26,7 @@ from urllib.parse import unquote
 from flask import Flask, render_template, jsonify, request, redirect, url_for, flash
 from flask_socketio import SocketIO
 
-from analyzer.suricata import run_suricata_on_pcap, merge_suricata_logs
+from analyzer.suricata import run_suricata_on_pcap, merge_suricata_logs, merge_eve_json
 from analyzer.tshark_analyzer import run_tshark_on_pcap, merge_all_results, parse_filter_ips
 
 # ─────────────────────────────────────────────
@@ -542,6 +542,7 @@ def _watch_pcap_files(project_name, pcap_dir, filter_ips):
                 'percent': 90, 'analyzed': len(all_pcap), 'total': len(all_pcap),
             })
             merge_suricata_logs(project_dir)
+            merge_eve_json(project_dir)
             merge_all_results(project_dir, filter_ips)
 
             total_pcap = len(all_pcap)
@@ -617,6 +618,7 @@ def api_resume(project_name):
         # 統一合併一次（O(n) 而非 O(n²)）
         _append_capture_log(project_name, '合併所有分析結果…', 'merging')
         merge_suricata_logs(project_dir)
+        merge_eve_json(project_dir)
         merge_all_results(project_dir, filter_ips)
         total = len(all_pcaps)
         analyzed = len(glob.glob(os.path.join(project_dir, '*_analysis.json')))
@@ -700,6 +702,7 @@ def api_reanalyze(project_name):
         # 統一合併一次（O(n) 而非 O(n²)）
         _append_capture_log(project_name, '合併所有分析結果…', 'merging')
         merge_suricata_logs(project_dir)
+        merge_eve_json(project_dir)
         merge_all_results(project_dir, filter_ips)
         total = len(all_pcaps)
         analyzed = len(glob.glob(os.path.join(project_dir, '*_analysis.json')))
@@ -1143,6 +1146,18 @@ def api_event_details(task_name, protocol):
             'total_count': protocol_data.get('count', 0),
             'top_connections': protocol_data.get('detailed_stats', [])
         })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/eve/<task_name>')
+def api_eve(task_name):
+    try:
+        eve_file = os.path.join(PROJECT_DIR, task_name, 'eve_summary.json')
+        if not os.path.exists(eve_file):
+            return jsonify({'error': 'eve_summary.json 不存在，請重新分析以生成 DNS/HTTP 摘要'}), 404
+        with open(eve_file, 'r', encoding='utf-8') as f:
+            return jsonify(json.load(f))
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

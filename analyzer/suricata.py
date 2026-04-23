@@ -7,6 +7,7 @@ Suricata 分析模組
 
 import os
 import glob
+import json
 import subprocess
 import re
 import urllib.request
@@ -126,6 +127,148 @@ def run_suricata_on_pcap(pcap_file, out_dir, suricata_exe=SURICATA_EXE_DEFAULT, 
         print(f"Suricata 完成: {os.path.basename(pcap_file)}")
 
     return result.returncode == 0
+
+
+def parse_eve_json(eve_file):
+    """解析單一 eve.json，回傳 { 'dns': [...], 'http': [...] }。
+    每筆 DNS 保留: timestamp, src_ip, dest_ip, query(rrname), rrtype, answers
+    每筆 HTTP 保留: timestamp, src_ip, dest_ip, hostname, url, method, status, user_agent
+    """
+    dns_events = []
+    http_events = []
+
+    if not os.path.exists(eve_file):
+        return {'dns': dns_events, 'http': http_events}
+
+    try:
+        with open(eve_file, 'r', encoding='utf-8', errors='ignore') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    ev = json.loads(line)
+                except Exception:
+                    continue
+
+                etype = ev.get('event_type')
+                ts    = ev.get('timestamp', '')
+                src   = ev.get('src_ip', '')
+                dst   = ev.get('dest_ip', '')
+
+                if etype == 'dns':
+                    dns = ev.get('dns', {})
+                    # 只取 request（type == 'request'）或 query（version 2 用 type==query）
+                    if dns.get('type') in ('request', 'query'):
+                        for q in dns.get('queries', []):
+                            dns_events.append({
+                                'timestamp': ts,
+                                'src_ip': src,
+                                'dest_ip': dst,
+                                'rrname': q.get('rrname', ''),
+                                'rrtype': q.get('rrtype', ''),
+                            })
+                        # version 2 格式：queries 可能不存在，改用頂層 rrname
+                        if not dns.get('queries') and dns.get('rrname'):
+                            dns_events.append({
+                                'timestamp': ts,
+                                'src_ip': src,
+                                'dest_ip': dst,
+                                'rrname': dns.get('rrname', ''),
+                                'rrtype': dns.get('rrtype', ''),
+                            })
+
+                elif etype == 'http':
+                    http = ev.get('http', {})
+                    http_events.append({
+                        'timestamp': ts,
+                        'src_ip': src,
+                        'dest_ip': dst,
+                        'hostname': http.get('hostname', ''),
+                        'url': http.get('url', ''),
+                        'method': http.get('http_method', ''),
+                        'status': http.get('status', ''),
+                        'user_agent': http.get('http_user_agent', ''),
+                    })
+
+    except Exception as e:
+        print(f"解析 eve.json 失敗 ({eve_file}): {e}")
+
+    return {'dns': dns_events, 'http': http_events}
+
+
+def merge_eve_json(project_dir):
+    """
+    合併 project_dir/suricata/**/eve.json，統計 DNS Top 查詢域名與 HTTP Top 主機名稱，
+    結果儲存為 project_dir/eve_summary.json。
+    回傳合併結果 dict，若無資料則回傳 None。
+    """
+    import json as _json
+    from collections import Counter
+
+    eve_files = glob.glob(os.path.join(project_dir, 'suricata', '*', 'eve.json'))
+    if not eve_files:
+        print("沒有找到 eve.json 檔案，跳過合併")
+        return None
+
+    dns_counter   = Counter()   # rrname -> count
+    http_hostname_counter = Counter()   # hostname -> count
+    http_url_counter = Counter()   # hostname+url -> count
+    dns_client_counter = Counter()   # src_ip -> count
+    http_events_sample = []   # 最多保留 500 筆原始 HTTP 記錄（供前端顯示）
+    dns_events_sample  = []   # 最多保留 500 筆原始 DNS 記錄
+
+    for eve_file in eve_files:
+        result = parse_eve_json(eve_file)
+
+        for d in result['dns']:
+            rrname = d.get('rrname', '').strip()
+            if rrname:
+                dns_counter[rrname] += 1
+                dns_client_counter[d.get('src_ip', '')] += 1
+        if len(dns_events_sample) < 500:
+            remaining = 500 - len(dns_events_sample)
+            dns_events_sample.extend(result['dns'][:remaining])
+
+        for h in result['http']:
+            hostname = h.get('hostname', '').strip()
+            if hostname:
+                http_hostname_counter[hostname] += 1
+                url_key = hostname + h.get('url', '')
+                http_url_counter[url_key] += 1
+        if len(http_events_sample) < 500:
+            remaining = 500 - len(http_events_sample)
+            http_events_sample.extend(result['http'][:remaining])
+
+    # Top 50 DNS 查詢域名
+    top_dns = [{'rrname': k, 'count': v}
+               for k, v in dns_counter.most_common(50)]
+    # Top 30 DNS 查詢用戶端
+    top_dns_clients = [{'src_ip': k, 'count': v}
+                       for k, v in dns_client_counter.most_common(30)]
+    # Top 50 HTTP 主機名稱
+    top_http_hosts = [{'hostname': k, 'count': v}
+                      for k, v in http_hostname_counter.most_common(50)]
+
+    summary = {
+        'total_dns_queries': sum(dns_counter.values()),
+        'total_http_requests': sum(http_hostname_counter.values()),
+        'unique_dns_domains': len(dns_counter),
+        'unique_http_hosts': len(http_hostname_counter),
+        'top_dns_queries': top_dns,
+        'top_dns_clients': top_dns_clients,
+        'top_http_hosts': top_http_hosts,
+        'dns_sample': dns_events_sample,
+        'http_sample': http_events_sample,
+    }
+
+    out_path = os.path.join(project_dir, 'eve_summary.json')
+    with open(out_path, 'w', encoding='utf-8') as f:
+        _json.dump(summary, f, ensure_ascii=False, indent=2)
+
+    print(f"eve_summary 已儲存: {out_path} "
+          f"(DNS {summary['total_dns_queries']} 筆, HTTP {summary['total_http_requests']} 筆)")
+    return summary
 
 
 def merge_suricata_logs(project_dir):
