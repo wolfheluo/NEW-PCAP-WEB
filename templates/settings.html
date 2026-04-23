@@ -97,10 +97,10 @@
                     <div class="fw-semibold mb-1">同時分析 PCAP 上限</div>
                     <div class="text-muted small mb-3">
                         限制同時執行 Suricata + TShark 的 PCAP 數量，降低 CPU / RAM 峰值。
-                        範圍 1 ~ 16，建議 1 ~ 4。
+                        <strong>0 代表不限制</strong>，1 ~ 16 為具體上限，建議 1 ~ 4。
                     </div>
                     <input type="number" id="input-max-concurrent" class="form-control"
-                           min="1" max="16" step="1" value="2">
+                           min="0" max="16" step="1" value="2">
                 </div>
             </div>
 
@@ -203,8 +203,8 @@ document.getElementById('btn-save-config').addEventListener('click', function ()
         msgEl.className = 'text-danger small';
         return;
     }
-    if (!mca || mca < 1 || mca > 16) {
-        msgEl.textContent = '⚠ 同時分析上限請輸入 1 ~ 16';
+    if (!mca || mca < 0 || mca > 16) {
+        msgEl.textContent = '⚠ 同時分析上限請輸入 0（0不限制）或 1 ~ 16';
         msgEl.className = 'text-danger small';
         return;
     }
@@ -223,7 +223,7 @@ document.getElementById('btn-save-config').addEventListener('click', function ()
     .then(d => {
         if (d.ok) {
             const dirMsg = d.project_dir ? `「${d.project_dir}」` : '預設路徑';
-            msgEl.textContent = `✔ 已儲存（${d.pcap_split_mb} MB，${dirMsg}，同時分析 ${d.max_concurrent_analysis} 個）`;
+            msgEl.textContent = `✔ 已儲存（${d.pcap_split_mb} MB，${dirMsg}，同時分析 ${ d.max_concurrent_analysis === 0 ? '不限制' : d.max_concurrent_analysis + ' 個' }）`;
             msgEl.className = 'text-success fw-semibold small';
         } else {
             msgEl.textContent = '✘ ' + (d.error || '儲存失敗');

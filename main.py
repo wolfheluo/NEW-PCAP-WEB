@@ -73,12 +73,12 @@ if 'project_dir' in _cfg and _cfg['project_dir'].strip():
 if 'checksum_offload' in _cfg:
     CHECKSUM_OFFLOAD = bool(_cfg['checksum_offload'])
 if 'max_concurrent_analysis' in _cfg:
-    MAX_CONCURRENT_ANALYSIS = max(1, int(_cfg['max_concurrent_analysis']))
+    MAX_CONCURRENT_ANALYSIS = max(0, int(_cfg['max_concurrent_analysis']))
 
 os.makedirs(PROJECT_DIR, exist_ok=True)
 
-# Semaphore：控制同時分析的 PCAP 數量（動態重建，見 api_settings_save_config）
-_analysis_semaphore = threading.Semaphore(MAX_CONCURRENT_ANALYSIS)
+# Semaphore：控制同時分析的 PCAP 數量（0 = 不限制；動態重建，見 api_settings_save_config）
+_analysis_semaphore = threading.Semaphore(MAX_CONCURRENT_ANALYSIS if MAX_CONCURRENT_ANALYSIS > 0 else 2**30)
 
 # 全局側錄狀態
 # { project_name: { process, status, packet_count, started_at, filter_ips, analyzing } }
@@ -1194,10 +1194,10 @@ def api_settings_save_config():
     # 同時分析上限
     if 'max_concurrent_analysis' in data:
         try:
-            mca = max(1, min(16, int(data['max_concurrent_analysis'])))
+            mca = max(0, min(16, int(data['max_concurrent_analysis'])))
             if mca != MAX_CONCURRENT_ANALYSIS:
                 MAX_CONCURRENT_ANALYSIS = mca
-                _analysis_semaphore = threading.Semaphore(MAX_CONCURRENT_ANALYSIS)
+                _analysis_semaphore = threading.Semaphore(mca if mca > 0 else 2**30)
             save['max_concurrent_analysis'] = MAX_CONCURRENT_ANALYSIS
         except (ValueError, TypeError):
             pass
