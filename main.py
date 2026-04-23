@@ -84,9 +84,19 @@ os.makedirs(PROJECT_DIR, exist_ok=True)
 _analysis_semaphore = threading.Semaphore(MAX_CONCURRENT_ANALYSIS if MAX_CONCURRENT_ANALYSIS > 0 else 2**30)
 
 # 全局側錄狀態
-# { project_name: { process, status, packet_count, started_at, filter_ips, analyzing } }
+# { project_name: { process, status, packet_count, started_at, filter_ips, analyzing,
+#                   _analysis_done_event } }
 capture_states: dict = {}
 capture_states_lock = threading.Lock()
+
+
+def _get_analysis_done_event(project_name: str) -> threading.Event:
+    """取得（或建立）專案對應的 analysis_done_event，供等待所有分析執行緒收尾使用。"""
+    with capture_states_lock:
+        state = capture_states.setdefault(project_name, {})
+        if '_analysis_done_event' not in state:
+            state['_analysis_done_event'] = threading.Event()
+        return state['_analysis_done_event']
 
 
 # ── 專案設定（persist exclude_ips 等，跨重啟保留）─────────────────
@@ -390,7 +400,13 @@ def _analyze_single_pcap_inner(project_name, pcap_file, filter_ips,
 
     with capture_states_lock:
         if project_name in capture_states:
-            capture_states[project_name]['analyzing'] = capture_states[project_name].get('analyzing', 0) + 1
+            current = capture_states[project_name].get('analyzing', 0)
+            capture_states[project_name]['analyzing'] = current + 1
+            # 第一個執行緒啟動時清除 Event，避免沿用前一批次的已完成狀態
+            if current == 0:
+                ev = capture_states[project_name].get('_analysis_done_event')
+                if ev:
+                    ev.clear()
 
     def _emit(stage, percent):
         pcap_dir_path = get_pcap_dir(project_name)
@@ -411,7 +427,6 @@ def _analyze_single_pcap_inner(project_name, pcap_file, filter_ips,
         stage_msg = {
             'suricata': f'Suricata 分析中：{fname}',
             'tshark':   f'TShark 統計中：{fname}',
-            'merging':  f'合併分析結果：{fname}',
             'complete': f'完成：{fname}',
         }.get(stage, f'{stage}: {fname}')
         _append_capture_log(project_name, stage_msg, stage)
@@ -424,11 +439,9 @@ def _analyze_single_pcap_inner(project_name, pcap_file, filter_ips,
         _emit('tshark', 50)
         run_tshark_on_pcap(pcap_file, project_dir, TSHARK_EXE, GEOIP_DB, filter_ips)
 
-        _emit('merging', 80)
-        merge_suricata_logs(project_dir)
-        merge_all_results(project_dir, filter_ips)
-
-        _emit('complete', 100)
+        # 注意：merge 已移至所有 PCAP 完成後統一執行（_watch_pcap_files / _run_remaining / _run_all），
+        # 避免 O(n²) 的全量重新合併。
+        _emit('complete', 80)
         pcap_dir_path = get_pcap_dir(project_name)
         all_pcaps_done = sorted(glob.glob(os.path.join(pcap_dir_path, '*.pcap')))
         with capture_states_lock:
@@ -460,8 +473,13 @@ def _analyze_single_pcap_inner(project_name, pcap_file, filter_ips,
     finally:
         with capture_states_lock:
             if project_name in capture_states:
-                n = capture_states[project_name].get('analyzing', 1)
-                capture_states[project_name]['analyzing'] = max(0, n - 1)
+                n = max(0, capture_states[project_name].get('analyzing', 1) - 1)
+                capture_states[project_name]['analyzing'] = n
+                # 最後一個執行緒完成時喚醒等待方
+                if n == 0:
+                    ev = capture_states[project_name].get('_analysis_done_event')
+                    if ev:
+                        ev.set()
 
 
 def _watch_pcap_files(project_name, pcap_dir, filter_ips):
@@ -506,13 +524,21 @@ def _watch_pcap_files(project_name, pcap_dir, filter_ips):
 
         # 側錄停止且所有檔案都已處理，結束監控
         if not is_running and all_pcap and all_pcap <= processed:
-            # 等所有分析執行緒收尾（analyzing 歸零）再宣告完成
-            for _ in range(30):  # 最多等 30 秒
-                with capture_states_lock:
-                    remaining = capture_states.get(project_name, {}).get('analyzing', 0)
-                if remaining == 0:
-                    break
-                time.sleep(1)
+            # 用 Event 等待所有分析執行緒收尾（取代每秒輪詢）
+            with capture_states_lock:
+                still_analyzing = capture_states.get(project_name, {}).get('analyzing', 0) > 0
+            if still_analyzing:
+                _get_analysis_done_event(project_name).wait(timeout=600)
+
+            # 所有 PCAP 完成後統一合併一次（O(n) 而非 O(n²)）
+            _append_capture_log(project_name, '合併所有分析結果…', 'merging')
+            socketio.emit('analysis_progress', {
+                'project': project_name, 'stage': 'merging', 'file': 'summary',
+                'percent': 90, 'analyzed': len(all_pcap), 'total': len(all_pcap),
+            })
+            merge_suricata_logs(project_dir)
+            merge_all_results(project_dir, filter_ips)
+
             total_pcap = len(all_pcap)
             analyzed = len(glob.glob(os.path.join(project_dir, '*_analysis.json')))
             socketio.emit('all_analysis_done', {
@@ -572,18 +598,21 @@ def api_resume(project_name):
         capture_states[project_name]['analyzing'] = 0
 
     def _run_remaining():
+        # 取得 Event 並清除（此時 analyzing == 0，安全清除）
+        done_ev = _get_analysis_done_event(project_name)
+        done_ev.clear()
         for pcap_file in remaining:
             threading.Thread(
                 target=_analyze_single_pcap,
                 args=(project_name, pcap_file, filter_ips),
                 daemon=True
             ).start()
-        for _ in range(300):
-            with capture_states_lock:
-                rem = capture_states.get(project_name, {}).get('analyzing', 0)
-            if rem == 0:
-                break
-            time.sleep(1)
+        # 用 Event 等待所有執行緒完成（取代每秒輪詢，最多等 300 秒）
+        done_ev.wait(timeout=300)
+        # 統一合併一次（O(n) 而非 O(n²)）
+        _append_capture_log(project_name, '合併所有分析結果…', 'merging')
+        merge_suricata_logs(project_dir)
+        merge_all_results(project_dir, filter_ips)
         total = len(all_pcaps)
         analyzed = len(glob.glob(os.path.join(project_dir, '*_analysis.json')))
         socketio.emit('all_analysis_done', {
@@ -652,18 +681,21 @@ def api_reanalyze(project_name):
         capture_states[project_name]['analyzing'] = 0
 
     def _run_all():
+        # 取得 Event 並清除（此時 analyzing == 0，安全清除）
+        done_ev = _get_analysis_done_event(project_name)
+        done_ev.clear()
         for pcap_file in all_pcaps:
             threading.Thread(
                 target=_analyze_single_pcap,
                 args=(project_name, pcap_file, filter_ips),
                 daemon=True
             ).start()
-        for _ in range(300):
-            with capture_states_lock:
-                rem = capture_states.get(project_name, {}).get('analyzing', 0)
-            if rem == 0:
-                break
-            time.sleep(1)
+        # 用 Event 等待所有執行緒完成（取代每秒輪詢，最多等 300 秒）
+        done_ev.wait(timeout=300)
+        # 統一合併一次（O(n) 而非 O(n²)）
+        _append_capture_log(project_name, '合併所有分析結果…', 'merging')
+        merge_suricata_logs(project_dir)
+        merge_all_results(project_dir, filter_ips)
         total = len(all_pcaps)
         analyzed = len(glob.glob(os.path.join(project_dir, '*_analysis.json')))
         socketio.emit('all_analysis_done', {
