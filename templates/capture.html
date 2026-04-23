@@ -15,9 +15,9 @@
     padding: 6px 14px;
 }
 .progress-log {
-    height: 200px;
-    max-height: 200px;
+    height: 300px;
     overflow-y: auto;
+    overflow-x: hidden;
     background: #1e1e1e;
     color: #d4d4d4;
     font-family: monospace;
@@ -25,10 +25,21 @@
     border-radius: 6px;
     padding: 12px;
     scroll-behavior: smooth;
+    scrollbar-width: thin;
+    scrollbar-color: #495057 transparent;
+}
+.progress-log::-webkit-scrollbar {
+    width: 6px;
+}
+.progress-log::-webkit-scrollbar-track {
+    background: transparent;
+}
+.progress-log::-webkit-scrollbar-thumb {
+    background-color: #495057;
+    border-radius: 3px;
 }
 .progress-card-body {
-    max-height: 300px;
-    overflow: hidden;
+    /* 外層不需要 overflow 魔法，捲軸在 .progress-log 本身 */
 }
 .progress-log .log-line { margin-bottom: 2px; }
 .log-suricata { color: #e8a838; }
@@ -227,15 +238,19 @@
                 <span><i class="fas fa-cogs me-2"></i>分析進度</span>
                 <span class="badge bg-warning text-dark ms-2 d-none pulse" id="analyzingBadge">分析中</span>
             </div>
-            <div class="card-body pb-2 progress-card-body">
-                <!-- 進度條 -->
-                <div class="progress mb-2" style="height: 8px;" id="progressBar">
-                    <div class="progress-bar progress-bar-striped progress-bar-animated"
-                         id="progressFill" role="progressbar" style="width:0%"></div>
+            <div class="card-body p-0">
+                <!-- 進度條（固定在捲軸外，不隨內容滾動） -->
+                <div class="px-3 pt-3 pb-2">
+                    <div class="progress" style="height: 8px;" id="progressBar">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated"
+                             id="progressFill" role="progressbar" style="width:0%"></div>
+                    </div>
                 </div>
-                <!-- 日誌 (固定高度 + 捲軸) -->
-                <div class="progress-log" id="progressLog">
-                    <div class="log-line text-muted">等待側錄開始…</div>
+                <!-- 獨立捲動區：日誌內容 -->
+                <div class="progress-card-body px-3 pb-3" id="progressScrollArea">
+                    <div class="progress-log" id="progressLog">
+                        <div class="log-line text-muted">等待側錄開始…</div>
+                    </div>
                 </div>
             </div>
         </div>
