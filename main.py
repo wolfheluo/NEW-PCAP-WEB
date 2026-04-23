@@ -943,7 +943,8 @@ def api_capture_start():
     split_mb = PCAP_SPLIT_SIZE_KB // 1024
     _append_capture_log(project_name, f'開始側錄（介面 {iface_index}），每 {split_mb} MB 自動切割', 'start')
 
-    return jsonify({'status': 'started', 'project': project_name, 'split_mb': split_mb})
+    return jsonify({'status': 'started', 'project': project_name, 'split_mb': split_mb,
+                    'capture_duration_seconds': CAPTURE_DURATION_SECONDS})
 
 
 @app.route('/api/capture/stop', methods=['POST'])
@@ -1035,6 +1036,7 @@ def api_capture_status(project_name):
         'total_packets': total_packets,
         'analyzed_count': analyzed_count,
         'total_pcap_count': total_pcap_count,
+        'capture_duration_seconds': CAPTURE_DURATION_SECONDS,
     })
 
 

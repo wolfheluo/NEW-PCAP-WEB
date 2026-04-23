@@ -214,7 +214,10 @@
                         <div class="text-muted small mt-1" id="totalBytes">—</div>
                     </div>
                 </div>
-                <div class="text-muted small text-center border-top mt-2 pt-2" id="captureTimer">—</div>
+                <div class="text-muted small text-center border-top mt-2 pt-2">
+                    <div id="captureTimerElapsed">—</div>
+                    <div id="captureTimerRemaining" class="mt-1">—</div>
+                </div>
             </div>
         </div>
 
@@ -249,6 +252,7 @@ const socket = io();
 
 let captureStartTime = null;
 let timerInterval = null;
+let captureDurationSeconds = 0;  // 0 = 不限制
 let currentPcapCount = 0;    // 追蹤目前已知的 PCAP 數量
 let currentAnalyzedCount = 0; // 追蹤目前已分析的 PCAP 數量
 let currentAnalyzingCount = 0; // 目前正在執行中的分析執行緒數
@@ -336,6 +340,7 @@ function pollStatus() {
             if (data.status === 'capturing') {
                 updateStats(data);
                 setCapturingUI(data.packet_count);
+                captureDurationSeconds = data.capture_duration_seconds ?? 0;
                 captureStartTime = captureStartTime || (data.started_at ? new Date(data.started_at) : new Date());
                 if (!timerInterval) startTimer();
             } else {
@@ -481,6 +486,7 @@ function startCapture() {
             return;
         }
         captureStartTime = new Date();
+        captureDurationSeconds = data.capture_duration_seconds ?? 0;
         // 先設好 capturing 狀態，再 reset 卡片（resetAnalyzeCard 需要 isCapturing）
         setCapturingUI(0);
         startTimer();
@@ -614,15 +620,41 @@ function startTimer() {
     timerInterval = setInterval(() => {
         if (!captureStartTime) return;
         const elapsed = Math.floor((Date.now() - captureStartTime) / 1000);
-        const h = String(Math.floor(elapsed / 3600)).padStart(2, '0');
-        const m = String(Math.floor((elapsed % 3600) / 60)).padStart(2, '0');
-        const s = String(elapsed % 60).padStart(2, '0');
-        document.getElementById('captureTimer').textContent = `已側錄 ${h}:${m}:${s}`;
+        const fmtSec = s => {
+            const h = String(Math.floor(s / 3600)).padStart(2, '0');
+            const m = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+            const sec = String(s % 60).padStart(2, '0');
+            return `${h}:${m}:${sec}`;
+        };
+        document.getElementById('captureTimerElapsed').textContent =
+            `已錄製時長：${fmtSec(elapsed)}`;
+
+        if (captureDurationSeconds > 0) {
+            const remaining = Math.max(0, captureDurationSeconds - elapsed);
+            const el = document.getElementById('captureTimerRemaining');
+            if (remaining === 0) {
+                el.textContent = '剩餘時長：自動停止中…';
+                el.className = 'mt-1 text-danger fw-semibold';
+            } else {
+                const pct = elapsed / captureDurationSeconds;
+                let cls = 'mt-1';
+                if (pct >= 0.9)      cls = 'mt-1 text-danger fw-semibold';
+                else if (pct >= 0.7) cls = 'mt-1 text-warning fw-semibold';
+                el.className = cls;
+                el.textContent = `剩餘時長：${fmtSec(remaining)}`;
+            }
+        } else {
+            document.getElementById('captureTimerRemaining').textContent = '剩餘時長：不限制';
+            document.getElementById('captureTimerRemaining').className = 'mt-1 text-muted';
+        }
     }, 1000);
 }
 
 function stopTimer() {
     if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+    document.getElementById('captureTimerElapsed').textContent = '—';
+    document.getElementById('captureTimerRemaining').textContent = '—';
+    document.getElementById('captureTimerRemaining').className = 'mt-1 text-muted';
 }
 
 // ─── 日誌 ──────────────────────────────────────
