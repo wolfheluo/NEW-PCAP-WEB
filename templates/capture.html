@@ -5,7 +5,7 @@
 {% block extra_css %}
 <style>
 .packet-counter {
-    font-size: 3rem;
+    font-size: clamp(1.5rem, 5vw, 3rem);
     font-weight: bold;
     font-variant-numeric: tabular-nums;
     letter-spacing: 2px;
@@ -100,11 +100,11 @@
                 <li class="breadcrumb-item active">{{ project_name }}</li>
             </ol>
         </nav>
-        <div class="d-flex justify-content-between align-items-center">
-            <h2 class="mb-0">
+        <div class="d-flex flex-wrap gap-2 justify-content-between align-items-center page-title-row">
+            <h2 class="mb-0 text-break">
                 <span class="capture-led me-2" id="pageLed"></span>封包側錄 — {{ project_name }}
             </h2>
-            <div class="d-flex gap-2">
+            <div class="d-flex gap-2 flex-shrink-0 page-title-actions">
                 <button class="btn btn-outline-warning btn-sm" id="btnResume"
                         onclick="resumeAnalysis()" style="display:none">
                     <i class="fas fa-play me-1"></i>繼續分析

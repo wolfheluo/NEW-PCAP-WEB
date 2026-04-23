@@ -311,7 +311,7 @@ body {
 .footer {
     background-color: var(--light-color);
     border-top: 1px solid #dee2e6;
-    margin-top: 3rem;
+    margin-top: auto;
 }
 
 /* 代碼樣式 */
@@ -324,6 +324,26 @@ code {
 }
 
 /* 響應式設計 */
+
+/* 可水平捲動的 nav-tabs（小螢幕） */
+.nav-tabs-scrollable {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+.nav-tabs-scrollable .nav-tabs {
+    flex-wrap: nowrap;
+    min-width: max-content;
+    border-bottom: 2px solid #dee2e6;
+}
+
+@media (max-width: 992px) {
+    /* 封包計數器 */
+    .packet-counter {
+        font-size: 2rem;
+        letter-spacing: 1px;
+    }
+}
+
 @media (max-width: 768px) {
     .container {
         padding-left: 15px;
@@ -347,6 +367,45 @@ code {
     .btn {
         font-size: 0.9rem;
     }
+
+    /* 封包計數器 */
+    .packet-counter {
+        font-size: 1.75rem;
+        letter-spacing: 0;
+    }
+
+    /* 頁面標題區塊 */
+    .page-title-row {
+        gap: 0.5rem;
+    }
+    .page-title-row h2,
+    .page-title-row h4 {
+        font-size: 1.25rem;
+    }
+
+    /* Modal 全寬 */
+    #anomalyDetailModal .modal-dialog {
+        max-width: 100%;
+        margin: 0.5rem;
+    }
+    #anomalyDetailModal .table td:first-child {
+        width: 40%;
+    }
+
+    /* 設定頁面時長輸入 */
+    .capture-duration-inputs {
+        flex-wrap: wrap;
+    }
+    .capture-duration-inputs input[type="number"] {
+        width: 100% !important;
+        flex: 1 1 80px;
+    }
+
+    /* 更新資源按鈕 */
+    .resource-update-header {
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
 }
 
 @media (max-width: 576px) {
@@ -365,6 +424,22 @@ code {
     
     .table-responsive {
         font-size: 0.9rem;
+    }
+
+    /* 封包計數器 */
+    .packet-counter {
+        font-size: 1.5rem;
+    }
+
+    /* footer 置中 */
+    .footer .col-md-6:last-child {
+        text-align: center !important;
+    }
+
+    /* 頁面標題按鈕群 */
+    .page-title-actions {
+        width: 100%;
+        justify-content: flex-end;
     }
 }
 

@@ -2,7 +2,7 @@
 {% block title %}系統設定 - PCAP 分析器{% endblock %}
 
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-4">
+<div class="d-flex flex-wrap gap-2 justify-content-between align-items-center mb-4 page-title-row">
     <h4 class="mb-0"><i class="fas fa-cog me-2 text-secondary"></i>系統設定</h4>
     <button id="btn-check" class="btn btn-primary">
         <i class="fas fa-stethoscope me-1"></i>自我檢測
@@ -16,6 +16,7 @@
             <i class="fas fa-clipboard-check me-1"></i>檢測結果
         </div>
         <div class="card-body p-0">
+            <div class="table-responsive">
             <table class="table table-hover mb-0">
                 <thead class="table-light">
                     <tr>
@@ -27,6 +28,7 @@
                 </thead>
                 <tbody id="check-table-body"></tbody>
             </table>
+            </div>
         </div>
     </div>
 
@@ -108,13 +110,13 @@
                 <div class="p-3 border rounded h-100">
                     <div class="fw-semibold mb-1">單次側錄預設時長</div>
                     <div class="text-muted small mb-3">每次側錄達到此時長後，系統將自動停止錄製。預設 6 小時 10 分鐘。<strong>小時與分鐘皆輸入 0 表示無時長限制。</strong></div>
-                    <div class="d-flex align-items-center gap-2">
+                    <div class="d-flex align-items-center gap-2 capture-duration-inputs">
                         <input type="number" id="input-capture-hours" class="form-control" style="width:90px"
                                min="0" max="99" step="1" value="6" placeholder="時">
-                        <span class="text-muted">小時</span>
+                        <span class="text-muted flex-shrink-0">小時</span>
                         <input type="number" id="input-capture-minutes" class="form-control" style="width:90px"
                                min="0" max="59" step="1" value="10" placeholder="分">
-                        <span class="text-muted">分鐘</span>
+                        <span class="text-muted flex-shrink-0">分鐘</span>
                     </div>
                 </div>
             </div>
@@ -161,12 +163,12 @@
             <!-- 更新 GeoLite -->
             <div class="col-md-6">
                 <div class="p-3 border rounded">
-                    <div class="d-flex justify-content-between align-items-start mb-2">
+                    <div class="d-flex flex-wrap gap-2 justify-content-between align-items-start mb-2 resource-update-header">
                         <div>
                             <div class="fw-semibold">GeoLite2 資料庫</div>
                             <div class="text-muted small">GeoLite2-City.mmdb</div>
                         </div>
-                        <button id="btn-geolite" class="btn btn-outline-primary btn-sm">
+                        <button id="btn-geolite" class="btn btn-outline-primary btn-sm flex-shrink-0">
                             <i class="fas fa-download me-1"></i>更新 GeoLite
                         </button>
                     </div>
@@ -183,12 +185,12 @@
             <!-- 更新 Rules -->
             <div class="col-md-6">
                 <div class="p-3 border rounded">
-                    <div class="d-flex justify-content-between align-items-start mb-2">
+                    <div class="d-flex flex-wrap gap-2 justify-content-between align-items-start mb-2 resource-update-header">
                         <div>
                             <div class="fw-semibold">Suricata 規則集</div>
                             <div class="text-muted small">emerging-all.rules</div>
                         </div>
-                        <button id="btn-rules" class="btn btn-outline-warning btn-sm">
+                        <button id="btn-rules" class="btn btn-outline-warning btn-sm flex-shrink-0">
                             <i class="fas fa-download me-1"></i>更新 Rules
                         </button>
                     </div>
