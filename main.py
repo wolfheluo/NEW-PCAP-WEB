@@ -44,6 +44,7 @@ GEOIP_DB     = "GeoLite2-City.mmdb"
 SETTING_FILE = "settings.json"
 PCAP_SPLIT_SIZE_KB = 204800  # 預設 200 MB
 CHECKSUM_OFFLOAD   = False   # NIC Checksum Offload，啟用則加 -k none
+MAX_CONCURRENT_ANALYSIS = 2  # 同時分析的 PCAP 上限（預設 2）
 
 os.makedirs(PROJECT_DIR, exist_ok=True)
 
@@ -71,8 +72,13 @@ if 'project_dir' in _cfg and _cfg['project_dir'].strip():
     PROJECT_DIR = _cfg['project_dir'].strip()
 if 'checksum_offload' in _cfg:
     CHECKSUM_OFFLOAD = bool(_cfg['checksum_offload'])
+if 'max_concurrent_analysis' in _cfg:
+    MAX_CONCURRENT_ANALYSIS = max(1, int(_cfg['max_concurrent_analysis']))
 
 os.makedirs(PROJECT_DIR, exist_ok=True)
+
+# Semaphore：控制同時分析的 PCAP 數量（動態重建，見 api_settings_save_config）
+_analysis_semaphore = threading.Semaphore(MAX_CONCURRENT_ANALYSIS)
 
 # 全局側錄狀態
 # { project_name: { process, status, packet_count, started_at, filter_ips, analyzing } }
@@ -350,6 +356,19 @@ def _analyze_single_pcap(project_name, pcap_file, filter_ips):
     project_dir = get_project_dir(project_name)
     pcap_stem = Path(pcap_file).stem
     fname = os.path.basename(pcap_file)
+
+    # 限制同時分析數量，超過上限的執行緒在此等候
+    _analysis_semaphore.acquire()
+    try:
+        _analyze_single_pcap_inner(project_name, pcap_file, filter_ips,
+                                   project_dir, pcap_stem, fname)
+    finally:
+        _analysis_semaphore.release()
+
+
+def _analyze_single_pcap_inner(project_name, pcap_file, filter_ips,
+                                project_dir, pcap_stem, fname):
+    """實際分析邏輯（由 _analyze_single_pcap 透過 Semaphore 呼叫）"""
 
     with capture_states_lock:
         if project_name in capture_states:
@@ -1129,15 +1148,16 @@ def _get_suricata_rules():
 def api_settings_get_config():
     cfg = _load_settings()
     return jsonify({
-        'pcap_split_mb':    cfg.get('pcap_split_mb', PCAP_SPLIT_SIZE_KB // 1024),
-        'project_dir':      cfg.get('project_dir', ''),
-        'checksum_offload': cfg.get('checksum_offload', False),
+        'pcap_split_mb':          cfg.get('pcap_split_mb', PCAP_SPLIT_SIZE_KB // 1024),
+        'project_dir':            cfg.get('project_dir', ''),
+        'checksum_offload':       cfg.get('checksum_offload', False),
+        'max_concurrent_analysis': cfg.get('max_concurrent_analysis', MAX_CONCURRENT_ANALYSIS),
     })
 
 
 @app.route('/api/settings/config', methods=['POST'])
 def api_settings_save_config():
-    global PCAP_SPLIT_SIZE_KB, PROJECT_DIR, CHECKSUM_OFFLOAD
+    global PCAP_SPLIT_SIZE_KB, PROJECT_DIR, CHECKSUM_OFFLOAD, MAX_CONCURRENT_ANALYSIS, _analysis_semaphore
     data = request.get_json(force=True)
     save = {}
 
@@ -1171,8 +1191,20 @@ def api_settings_save_config():
     CHECKSUM_OFFLOAD = bool(data.get('checksum_offload', False))
     save['checksum_offload'] = CHECKSUM_OFFLOAD
 
+    # 同時分析上限
+    if 'max_concurrent_analysis' in data:
+        try:
+            mca = max(1, min(16, int(data['max_concurrent_analysis'])))
+            if mca != MAX_CONCURRENT_ANALYSIS:
+                MAX_CONCURRENT_ANALYSIS = mca
+                _analysis_semaphore = threading.Semaphore(MAX_CONCURRENT_ANALYSIS)
+            save['max_concurrent_analysis'] = MAX_CONCURRENT_ANALYSIS
+        except (ValueError, TypeError):
+            pass
+
     _save_settings(save)
-    return jsonify({'ok': True, 'pcap_split_mb': save['pcap_split_mb'], 'project_dir': PROJECT_DIR, 'checksum_offload': CHECKSUM_OFFLOAD})
+    return jsonify({'ok': True, 'pcap_split_mb': save['pcap_split_mb'], 'project_dir': PROJECT_DIR,
+                    'checksum_offload': CHECKSUM_OFFLOAD, 'max_concurrent_analysis': MAX_CONCURRENT_ANALYSIS})
 
 
 @app.route('/api/settings/check')

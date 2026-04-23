@@ -91,6 +91,19 @@
                 </div>
             </div>
 
+            <!-- 同時分析上限 -->
+            <div class="col-md-6">
+                <div class="p-3 border rounded h-100">
+                    <div class="fw-semibold mb-1">同時分析 PCAP 上限</div>
+                    <div class="text-muted small mb-3">
+                        限制同時執行 Suricata + TShark 的 PCAP 數量，降低 CPU / RAM 峰值。
+                        範圍 1 ~ 16，建議 1 ~ 4。
+                    </div>
+                    <input type="number" id="input-max-concurrent" class="form-control"
+                           min="1" max="16" step="1" value="2">
+                </div>
+            </div>
+
         </div>
 
         <!-- 儲存按鈕 -->
@@ -174,15 +187,24 @@ fetch('/api/settings/config')
         }
         document.getElementById('input-project-dir').value = d.project_dir || '';
         document.getElementById('input-checksum-offload').checked = !!d.checksum_offload;
+        if (d.max_concurrent_analysis) {
+            document.getElementById('input-max-concurrent').value = d.max_concurrent_analysis;
+        }
     });
 
 // ── 儲存設定 ──────────────────────────────────────
 document.getElementById('btn-save-config').addEventListener('click', function () {
     const mb = parseInt(document.getElementById('input-pcap-mb').value, 10);
     const projectDir = document.getElementById('input-project-dir').value.trim();
+    const mca = parseInt(document.getElementById('input-max-concurrent').value, 10);
     const msgEl = document.getElementById('config-save-msg');
     if (!mb || mb < 10 || mb > 10240) {
         msgEl.textContent = '⚠ 請輸入 10 ~ 10240 MB 之間的數值';
+        msgEl.className = 'text-danger small';
+        return;
+    }
+    if (!mca || mca < 1 || mca > 16) {
+        msgEl.textContent = '⚠ 同時分析上限請輸入 1 ~ 16';
         msgEl.className = 'text-danger small';
         return;
     }
@@ -191,16 +213,17 @@ document.getElementById('btn-save-config').addEventListener('click', function ()
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-            pcap_split_mb:    mb,
-            project_dir:      projectDir,
-            checksum_offload: document.getElementById('input-checksum-offload').checked,
+            pcap_split_mb:           mb,
+            project_dir:             projectDir,
+            checksum_offload:        document.getElementById('input-checksum-offload').checked,
+            max_concurrent_analysis: mca,
         })
     })
     .then(r => r.json())
     .then(d => {
         if (d.ok) {
             const dirMsg = d.project_dir ? `「${d.project_dir}」` : '預設路徑';
-            msgEl.textContent = `✔ 已儲存（${d.pcap_split_mb} MB，${dirMsg}）`;
+            msgEl.textContent = `✔ 已儲存（${d.pcap_split_mb} MB，${dirMsg}，同時分析 ${d.max_concurrent_analysis} 個）`;
             msgEl.className = 'text-success fw-semibold small';
         } else {
             msgEl.textContent = '✘ ' + (d.error || '儲存失敗');
