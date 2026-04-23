@@ -937,7 +937,8 @@ def api_capture_start():
     threading.Thread(target=_read_dumpcap_stderr, args=(project_name, proc), daemon=True).start()
     threading.Thread(target=_poll_packet_count, args=(project_name, pcap_dir), daemon=True).start()
     threading.Thread(target=_watch_pcap_files, args=(project_name, pcap_dir, filter_ips), daemon=True).start()
-    threading.Thread(target=_auto_stop_after_duration, args=(project_name, CAPTURE_DURATION_SECONDS), daemon=True).start()
+    if CAPTURE_DURATION_SECONDS > 0:
+        threading.Thread(target=_auto_stop_after_duration, args=(project_name, CAPTURE_DURATION_SECONDS), daemon=True).start()
 
     split_mb = PCAP_SPLIT_SIZE_KB // 1024
     _append_capture_log(project_name, f'開始側錄（介面 {iface_index}），每 {split_mb} MB 自動切割', 'start')
@@ -1323,8 +1324,7 @@ def api_settings_save_config():
     try:
         dur_h = max(0, min(99, int(data.get('capture_duration_hours', CAPTURE_DURATION_SECONDS // 3600))))
         dur_m = max(0, min(59, int(data.get('capture_duration_minutes', (CAPTURE_DURATION_SECONDS % 3600) // 60))))
-        if dur_h == 0 and dur_m == 0:
-            return jsonify({'ok': False, 'error': '側錄時長不可為 0，請至少設定 1 分鐘'}), 400
+        # 0 + 0 表示無時長限制
         CAPTURE_DURATION_SECONDS = dur_h * 3600 + dur_m * 60
         save['capture_duration_hours']   = dur_h
         save['capture_duration_minutes'] = dur_m

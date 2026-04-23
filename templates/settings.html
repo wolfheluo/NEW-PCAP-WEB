@@ -107,7 +107,7 @@
             <div class="col-md-6">
                 <div class="p-3 border rounded h-100">
                     <div class="fw-semibold mb-1">單次側錄預設時長</div>
-                    <div class="text-muted small mb-3">每次側錄達到此時長後，系統將自動停止錄製。預設 6 小時 10 分鐘。</div>
+                    <div class="text-muted small mb-3">每次側錄達到此時長後，系統將自動停止錄製。預設 6 小時 10 分鐘。<strong>小時與分鐘皆輸入 0 表示無時長限制。</strong></div>
                     <div class="d-flex align-items-center gap-2">
                         <input type="number" id="input-capture-hours" class="form-control" style="width:90px"
                                min="0" max="99" step="1" value="6" placeholder="時">
@@ -251,11 +251,6 @@ document.getElementById('btn-save-config').addEventListener('click', function ()
         msgEl.className = 'text-danger small';
         return;
     }
-    if (durH === 0 && durM === 0) {
-        msgEl.textContent = '⚠ 側錄時長不可為 0，請至少設定 1 分鐘';
-        msgEl.className = 'text-danger small';
-        return;
-    }
     if (durH < 0 || durH > 99 || durM < 0 || durM > 59) {
         msgEl.textContent = '⚠ 請輸入正確的時長（小時 0-99，分鐘 0-59）';
         msgEl.className = 'text-danger small';
@@ -279,7 +274,7 @@ document.getElementById('btn-save-config').addEventListener('click', function ()
     .then(d => {
         if (d.ok) {
             const dirMsg = d.project_dir ? `「${d.project_dir}」` : '預設路徑';
-            const durMsg = `${d.capture_duration_hours}h ${d.capture_duration_minutes}m`;
+            const durMsg = (d.capture_duration_hours === 0 && d.capture_duration_minutes === 0) ? '不限制' : `${d.capture_duration_hours}h ${d.capture_duration_minutes}m`;
             msgEl.textContent = `✔ 已儲存（${d.pcap_split_mb} MB，${dirMsg}，同時分析 ${ d.max_concurrent_analysis === 0 ? '不限制' : d.max_concurrent_analysis + ' 個' }，無風險 PCAP ${ d.delete_safe_pcap ? '自動刪除' : '保留' }，側錄時長 ${durMsg}）`;
             msgEl.className = 'text-success fw-semibold small';
         } else {
