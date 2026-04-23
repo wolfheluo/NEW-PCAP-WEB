@@ -16,6 +16,16 @@ from pathlib import Path
 
 SURICATA_EXE_DEFAULT = r"C:\Program Files\Suricata\suricata.exe"
 
+# 與 main.py 的 _FAST_LOG_RE 相同結構，用於 filter_log_file 去重，
+# 確保 (sig_id, msg, src_ip, dst_ip) key 與 _parse_fast_log_alerts 一致。
+_FILTER_LOG_RE = re.compile(
+    r'\[\*\*\]\s+\[\d+:(\d+):\d+\]\s+(.+?)\s+\[\*\*\]'
+    r'.*?'
+    r'(\d{1,3}(?:\.\d{1,3}){3}|[a-fA-F0-9:]+):\d+\s*->\s*'
+    r'(\d{1,3}(?:\.\d{1,3}){3}|[a-fA-F0-9:]+):\d+',
+    re.DOTALL
+)
+
 
 def update_suricata_rules(suricata_exe=SURICATA_EXE_DEFAULT):
     """下載並更新 Suricata 規則文件"""
@@ -44,7 +54,13 @@ def update_suricata_rules(suricata_exe=SURICATA_EXE_DEFAULT):
 
 
 def extract_key_fields(line):
-    """從 fast.log 行中提取關鍵字段，用於去重過濾。返回 None 表示應過濾。"""
+    """從 fast.log 行中提取關鍵字段，用於去重過濾。返回 None 表示應過濾。
+
+    去重 key 為 (sig_id, msg, src_ip, dst_ip)，與 main.py 的
+    _parse_fast_log_alerts 及 detect_anomalies 保持一致：
+    - 同一告警類型在不同 IP 對之間的連線都會被保留（供儀表板聚合顯示）
+    - 完全相同的 (告警, 來源, 目的) 重複行才被去除
+    """
     if "Priority: 3" in line:
         return None
     if "ET INFO HTTP Request to a" in line and ".tw domain" in line:
@@ -55,18 +71,12 @@ def extract_key_fields(line):
     if "[**]" not in line:
         return None
 
-    event_start = line.find("[**]")
-    event = line[event_start:]
-
-    ip_match = re.search(
-        r"(\d{1,3}(?:\.\d{1,3}){3}|[a-fA-F0-9:]+):\d+\s*->\s*(\d{1,3}(?:\.\d{1,3}){3}|[a-fA-F0-9:]+):\d+",
-        line
-    )
-    if not ip_match:
+    m = _FILTER_LOG_RE.search(line)
+    if not m:
         return None
 
-    src_ip, dst_ip = ip_match.groups()
-    return (event, src_ip, dst_ip)
+    sig_id, msg, src_ip, dst_ip = m.groups()
+    return (sig_id, msg.strip(), src_ip, dst_ip)
 
 
 def filter_log_file(input_file, output_file):

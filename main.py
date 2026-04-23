@@ -760,6 +760,14 @@ def delete_project(project_name):
     import shutil
     with capture_states_lock:
         state = capture_states.get(project_name)
+        # 若仍有分析執行緒在寫入 JSON，拒絕刪除以避免 FileNotFoundError
+        if state and state.get('analyzing', 0) > 0:
+            flash(
+                f'專案「{project_name}」仍有 {state["analyzing"]} 個分析執行緒執行中，'
+                '請等待分析完成後再刪除。',
+                'warning'
+            )
+            return redirect(url_for('index'))
         if state and state.get('process'):
             try:
                 state['process'].terminate()
@@ -1308,12 +1316,23 @@ def api_settings_save_config():
     save['checksum_offload'] = CHECKSUM_OFFLOAD
 
     # 同時分析上限
+    semaphore_deferred = False
     if 'max_concurrent_analysis' in data:
         try:
             mca = max(0, min(16, int(data['max_concurrent_analysis'])))
             if mca != MAX_CONCURRENT_ANALYSIS:
                 MAX_CONCURRENT_ANALYSIS = mca
-                _analysis_semaphore = threading.Semaphore(mca if mca > 0 else 2**30)
+                # 只在所有專案都沒有分析執行緒持有舊 semaphore 時才立即重建，
+                # 否則舊執行緒仍持有舊 semaphore，新上限對其無效。
+                with capture_states_lock:
+                    any_analyzing = any(
+                        s.get('analyzing', 0) > 0
+                        for s in capture_states.values()
+                    )
+                if any_analyzing:
+                    semaphore_deferred = True  # 設定已存檔，重啟或下次無分析時生效
+                else:
+                    _analysis_semaphore = threading.Semaphore(mca if mca > 0 else 2**30)
             save['max_concurrent_analysis'] = MAX_CONCURRENT_ANALYSIS
         except (ValueError, TypeError):
             pass
@@ -1337,7 +1356,8 @@ def api_settings_save_config():
     return jsonify({'ok': True, 'pcap_split_mb': save['pcap_split_mb'], 'project_dir': PROJECT_DIR,
                     'checksum_offload': CHECKSUM_OFFLOAD, 'max_concurrent_analysis': MAX_CONCURRENT_ANALYSIS,
                     'delete_safe_pcap': DELETE_SAFE_PCAP,
-                    'capture_duration_hours': dur_h, 'capture_duration_minutes': dur_m})
+                    'capture_duration_hours': dur_h, 'capture_duration_minutes': dur_m,
+                    'semaphore_deferred': semaphore_deferred})
 
 
 @app.route('/api/settings/check')
