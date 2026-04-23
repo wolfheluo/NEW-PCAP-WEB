@@ -23,7 +23,7 @@ from pathlib import Path
 from collections import defaultdict
 from urllib.parse import unquote
 
-from flask import Flask, render_template, jsonify, request, redirect, url_for, flash
+from flask import Flask, render_template, jsonify, request, redirect, url_for, flash, send_file
 from flask_socketio import SocketIO
 
 from analyzer.suricata import run_suricata_on_pcap, merge_suricata_logs, merge_eve_json
@@ -1448,6 +1448,144 @@ def api_settings_download(target):
     t = threading.Thread(target=_download, args=(url, save_path, target), daemon=True)
     t.start()
     return jsonify({'ok': True, 'message': '下載已開始'})
+
+
+# ─────────────────────────────────────────────
+# 專案資料夾瀏覽器
+# ─────────────────────────────────────────────
+
+def _safe_project_path(rel: str) -> str | None:
+    """
+    將相對路徑（相對於 PROJECT_DIR）解析為絕對路徑，
+    確保結果仍在 PROJECT_DIR 之內，防止目錄穿越攻擊。
+    回傳安全的絕對路徑，若路徑逃逸則回傳 None。
+    """
+    base = os.path.realpath(PROJECT_DIR)
+    target = os.path.realpath(os.path.join(base, rel.lstrip('/\\')))
+    if target == base or target.startswith(base + os.sep):
+        return target
+    return None
+
+
+@app.route('/files/')
+@app.route('/files/<path:subpath>')
+def files_browser(subpath=''):
+    return render_template('files.html', subpath=subpath)
+
+
+@app.route('/api/files/list')
+def api_files_list():
+    rel = request.args.get('path', '')
+    abs_path = _safe_project_path(rel)
+    if abs_path is None or not os.path.exists(abs_path):
+        return jsonify({'error': '路徑不存在或不合法'}), 400
+    if not os.path.isdir(abs_path):
+        return jsonify({'error': '不是資料夾'}), 400
+
+    items = []
+    try:
+        for entry in sorted(os.scandir(abs_path), key=lambda e: (not e.is_dir(), e.name.lower())):
+            stat = entry.stat()
+            items.append({
+                'name':     entry.name,
+                'is_dir':   entry.is_dir(),
+                'size':     stat.st_size,
+                'mtime':    stat.st_mtime,
+            })
+    except PermissionError:
+        return jsonify({'error': '權限不足'}), 403
+
+    base_abs = os.path.realpath(PROJECT_DIR)
+    norm_path = os.path.relpath(abs_path, base_abs).replace('\\', '/')
+    if norm_path == '.':
+        norm_path = ''
+
+    return jsonify({'path': norm_path, 'items': items})
+
+
+@app.route('/api/files/download')
+def api_files_download():
+    rel = request.args.get('path', '')
+    abs_path = _safe_project_path(rel)
+    if abs_path is None or not os.path.isfile(abs_path):
+        return jsonify({'error': '檔案不存在或不合法'}), 404
+    return send_file(abs_path, as_attachment=True,
+                     download_name=os.path.basename(abs_path))
+
+
+@app.route('/api/files/preview')
+def api_files_preview():
+    rel = request.args.get('path', '')
+    abs_path = _safe_project_path(rel)
+    if abs_path is None or not os.path.isfile(abs_path):
+        return jsonify({'error': '檔案不存在或不合法'}), 404
+
+    # 只允許預覽文字類型
+    TEXT_EXT = {'.txt', '.log', '.json', '.md', '.csv', '.yaml', '.yml',
+                '.conf', '.cfg', '.ini', '.xml', '.rules', '.sh', '.py'}
+    ext = os.path.splitext(abs_path)[1].lower()
+    if ext not in TEXT_EXT:
+        return jsonify({'error': '此類型檔案不支援預覽'}), 415
+
+    MAX_PREVIEW_BYTES = 512 * 1024  # 512 KB
+    try:
+        with open(abs_path, 'r', encoding='utf-8', errors='replace') as f:
+            content = f.read(MAX_PREVIEW_BYTES)
+        truncated = os.path.getsize(abs_path) > MAX_PREVIEW_BYTES
+    except Exception as e:
+        return jsonify({'error': f'讀取失敗：{e}'}), 500
+
+    return jsonify({'content': content, 'truncated': truncated,
+                    'name': os.path.basename(abs_path), 'ext': ext})
+
+
+@app.route('/api/files/upload', methods=['POST'])
+def api_files_upload():
+    rel = request.form.get('path', '')
+    abs_path = _safe_project_path(rel)
+    if abs_path is None:
+        return jsonify({'error': '路徑不合法'}), 400
+    os.makedirs(abs_path, exist_ok=True)
+
+    files = request.files.getlist('files')
+    if not files:
+        return jsonify({'error': '未選擇檔案'}), 400
+
+    saved = []
+    for f in files:
+        filename = f.filename
+        if not filename:
+            continue
+        # 只取最後一段檔名，防止路徑注入
+        filename = os.path.basename(filename)
+        dest = os.path.join(abs_path, filename)
+        # 確保目標仍在 PROJECT_DIR 內
+        if _safe_project_path(os.path.relpath(dest, os.path.realpath(PROJECT_DIR))) is None:
+            continue
+        f.save(dest)
+        saved.append(filename)
+
+    return jsonify({'ok': True, 'saved': saved})
+
+
+@app.route('/api/files/mkdir', methods=['POST'])
+def api_files_mkdir():
+    data = request.get_json(force=True)
+    rel = data.get('path', '')
+    name = data.get('name', '').strip()
+    if not name or '/' in name or '\\' in name or name in ('.', '..'):
+        return jsonify({'error': '資料夾名稱不合法'}), 400
+    abs_parent = _safe_project_path(rel)
+    if abs_parent is None:
+        return jsonify({'error': '路徑不合法'}), 400
+    new_dir = os.path.join(abs_parent, name)
+    if _safe_project_path(os.path.relpath(new_dir, os.path.realpath(PROJECT_DIR))) is None:
+        return jsonify({'error': '路徑不合法'}), 400
+    try:
+        os.makedirs(new_dir, exist_ok=True)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    return jsonify({'ok': True})
 
 
 # ─────────────────────────────────────────────

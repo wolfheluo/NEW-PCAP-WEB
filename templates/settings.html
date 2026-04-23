@@ -4,9 +4,14 @@
 {% block content %}
 <div class="d-flex flex-wrap gap-2 justify-content-between align-items-center mb-4 page-title-row">
     <h4 class="mb-0"><i class="fas fa-cog me-2 text-secondary"></i>系統設定</h4>
-    <button id="btn-check" class="btn btn-primary">
-        <i class="fas fa-stethoscope me-1"></i>自我檢測
-    </button>
+    <div class="d-flex gap-2">
+        <a href="{{ url_for('files_browser') }}" class="btn btn-outline-warning">
+            <i class="fas fa-folder-open me-1"></i>專案資料夾
+        </a>
+        <button id="btn-check" class="btn btn-primary">
+            <i class="fas fa-stethoscope me-1"></i>自我檢測
+        </button>
+    </div>
 </div>
 
 <!-- 檢測結果 -->

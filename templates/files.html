@@ -1,0 +1,502 @@
+{% extends "base.html" %}
+{% block title %}專案資料夾 - PCAP 分析器{% endblock %}
+
+{% block extra_css %}
+<style>
+#file-table td, #file-table th { vertical-align: middle; }
+#file-table .file-icon { width: 28px; text-align: center; }
+.breadcrumb-item a { text-decoration: none; }
+#drop-zone {
+    border: 2px dashed #adb5bd;
+    border-radius: 8px;
+    transition: border-color .2s, background .2s;
+    cursor: pointer;
+}
+#drop-zone.drag-over {
+    border-color: #0d6efd;
+    background: rgba(13,110,253,.06);
+}
+#drop-zone:hover { border-color: #6c757d; }
+.upload-list-item { font-size: .85rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap gap-2 justify-content-between align-items-center mb-4 page-title-row">
+    <h4 class="mb-0">
+        <i class="fas fa-folder-open me-2 text-warning"></i>專案資料夾
+    </h4>
+    <div class="d-flex gap-2">
+        <button class="btn btn-outline-secondary btn-sm" id="btn-mkdir">
+            <i class="fas fa-folder-plus me-1"></i>新增資料夾
+        </button>
+        <button class="btn btn-primary btn-sm" id="btn-upload-open">
+            <i class="fas fa-upload me-1"></i>上傳檔案
+        </button>
+    </div>
+</div>
+
+<!-- 路徑導覽 -->
+<nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb" id="breadcrumb">
+        <li class="breadcrumb-item">
+            <a href="#" data-path=""><i class="fas fa-home me-1"></i>Project 根目錄</a>
+        </li>
+    </ol>
+</nav>
+
+<!-- 上傳面板 -->
+<div id="upload-panel" class="card shadow-sm mb-4 d-none">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <span class="fw-semibold"><i class="fas fa-upload me-1"></i>上傳到目前目錄</span>
+        <button type="button" class="btn-close" id="btn-upload-close"></button>
+    </div>
+    <div class="card-body">
+        <div id="drop-zone" class="p-4 text-center text-muted mb-3">
+            <i class="fas fa-cloud-upload-alt fa-2x mb-2 d-block"></i>
+            拖曳檔案到此處，或點擊選擇檔案
+            <input type="file" id="file-input" multiple class="d-none">
+        </div>
+        <ul id="upload-file-list" class="list-unstyled mb-3"></ul>
+        <div class="d-flex justify-content-end gap-2">
+            <button class="btn btn-secondary btn-sm" id="btn-upload-clear">清除</button>
+            <button class="btn btn-primary btn-sm" id="btn-upload-start" disabled>
+                <i class="fas fa-upload me-1"></i>開始上傳
+            </button>
+        </div>
+        <div id="upload-result" class="mt-2 small"></div>
+    </div>
+</div>
+
+<!-- 檔案清單 -->
+<div class="card shadow-sm">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <span class="fw-semibold" id="dir-label">
+            <i class="fas fa-folder me-1 text-warning"></i>載入中...
+        </span>
+        <span class="text-muted small" id="item-count"></span>
+    </div>
+    <div class="card-body p-0">
+        <div id="loading-row" class="text-center text-muted py-4">
+            <span class="spinner-border spinner-border-sm me-2"></span>讀取中...
+        </div>
+        <div class="table-responsive d-none" id="table-wrapper">
+            <table class="table table-hover mb-0" id="file-table">
+                <thead class="table-light">
+                    <tr>
+                        <th class="file-icon"></th>
+                        <th>名稱</th>
+                        <th style="width:110px">大小</th>
+                        <th style="width:170px">修改時間</th>
+                        <th style="width:120px" class="text-end">操作</th>
+                    </tr>
+                </thead>
+                <tbody id="file-tbody"></tbody>
+            </table>
+        </div>
+        <div id="empty-row" class="text-center text-muted py-4 d-none">
+            <i class="fas fa-folder-open fa-2x mb-2 d-block"></i>此資料夾為空
+        </div>
+    </div>
+</div>
+
+<!-- 預覽 Modal -->
+<div class="modal fade" id="preview-modal" tabindex="-1">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="preview-title">
+                    <i class="fas fa-eye me-1"></i>預覽
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body p-0">
+                <div id="preview-loading" class="text-center text-muted py-4">
+                    <span class="spinner-border spinner-border-sm me-2"></span>載入中...
+                </div>
+                <div id="preview-truncated" class="alert alert-warning m-2 d-none">
+                    <i class="fas fa-exclamation-triangle me-1"></i>
+                    檔案過大，僅顯示前 512 KB 內容。
+                </div>
+                <pre id="preview-content" class="m-0 p-3"
+                     style="font-size:.82rem; white-space:pre-wrap; word-break:break-all; max-height:70vh; overflow:auto; display:none;"></pre>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">關閉</button>
+                <a id="preview-download-btn" href="#" class="btn btn-primary btn-sm" download>
+                    <i class="fas fa-download me-1"></i>下載
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 新增資料夾 Modal -->
+<div class="modal fade" id="mkdir-modal" tabindex="-1">
+    <div class="modal-dialog modal-sm">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-folder-plus me-1"></i>新增資料夾</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="text" id="mkdir-name" class="form-control" placeholder="資料夾名稱" maxlength="100">
+                <div id="mkdir-error" class="text-danger small mt-1 d-none"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-primary btn-sm" id="btn-mkdir-ok">建立</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ── 狀態 ──────────────────────────────────────
+let currentPath = '{{ subpath }}';
+let pendingFiles = [];
+
+const previewModal  = new bootstrap.Modal(document.getElementById('preview-modal'));
+const mkdirModal    = new bootstrap.Modal(document.getElementById('mkdir-modal'));
+
+// ── 工具 ─────────────────────────────────────
+function fmtBytes(b) {
+    if (b === 0) return '0 B';
+    const units = ['B','KB','MB','GB','TB'];
+    let i = 0;
+    while (b >= 1024 && i < units.length - 1) { b /= 1024; i++; }
+    return b.toFixed(1) + ' ' + units[i];
+}
+
+function fmtTime(ts) {
+    const d = new Date(ts * 1000);
+    const pad = n => String(n).padStart(2,'0');
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function encPath(p) { return encodeURIComponent(p); }
+
+const TEXT_EXTS = new Set(['.txt','.log','.json','.md','.csv','.yaml','.yml',
+                            '.conf','.cfg','.ini','.xml','.rules','.sh','.py']);
+function canPreview(name) {
+    const ext = name.includes('.') ? '.' + name.split('.').pop().toLowerCase() : '';
+    return TEXT_EXTS.has(ext);
+}
+
+// ── 導覽麵包屑 ────────────────────────────────
+function updateBreadcrumb(path) {
+    const ol = document.getElementById('breadcrumb');
+    ol.innerHTML = '';
+    const root = document.createElement('li');
+    root.className = 'breadcrumb-item';
+    if (!path) {
+        root.innerHTML = '<span><i class="fas fa-home me-1"></i>Project 根目錄</span>';
+        root.classList.add('active');
+    } else {
+        root.innerHTML = '<a href="#" data-path=""><i class="fas fa-home me-1"></i>Project 根目錄</a>';
+        root.querySelector('a').addEventListener('click', e => { e.preventDefault(); loadDir(''); });
+    }
+    ol.appendChild(root);
+
+    if (path) {
+        const parts = path.split('/').filter(Boolean);
+        parts.forEach((part, idx) => {
+            const li = document.createElement('li');
+            li.className = 'breadcrumb-item';
+            const partPath = parts.slice(0, idx + 1).join('/');
+            if (idx === parts.length - 1) {
+                li.classList.add('active');
+                li.textContent = part;
+            } else {
+                li.innerHTML = `<a href="#">${part}</a>`;
+                li.querySelector('a').addEventListener('click', e => { e.preventDefault(); loadDir(partPath); });
+            }
+            ol.appendChild(li);
+        });
+    }
+}
+
+// ── 載入目錄 ──────────────────────────────────
+function loadDir(path) {
+    currentPath = path;
+    document.getElementById('loading-row').classList.remove('d-none');
+    document.getElementById('table-wrapper').classList.add('d-none');
+    document.getElementById('empty-row').classList.add('d-none');
+    updateBreadcrumb(path);
+
+    fetch('/api/files/list?path=' + encPath(path))
+        .then(r => r.json())
+        .then(data => {
+            document.getElementById('loading-row').classList.add('d-none');
+            if (data.error) {
+                document.getElementById('empty-row').textContent = '錯誤：' + data.error;
+                document.getElementById('empty-row').classList.remove('d-none');
+                return;
+            }
+            if (data.items.length === 0) {
+                document.getElementById('empty-row').classList.remove('d-none');
+            } else {
+                renderTable(data.items, data.path);
+                document.getElementById('table-wrapper').classList.remove('d-none');
+            }
+
+            const dirLabel = data.path ? data.path : 'Project 根目錄';
+            document.getElementById('dir-label').innerHTML =
+                `<i class="fas fa-folder me-1 text-warning"></i>${dirLabel}`;
+            document.getElementById('item-count').textContent =
+                `${data.items.filter(i=>!i.is_dir).length} 個檔案，${data.items.filter(i=>i.is_dir).length} 個資料夾`;
+        })
+        .catch(() => {
+            document.getElementById('loading-row').classList.add('d-none');
+            document.getElementById('empty-row').textContent = '載入失敗，請確認服務是否正常';
+            document.getElementById('empty-row').classList.remove('d-none');
+        });
+}
+
+// ── 渲染表格 ──────────────────────────────────
+function renderTable(items, basePath) {
+    const tbody = document.getElementById('file-tbody');
+    tbody.innerHTML = '';
+    items.forEach(item => {
+        const itemPath = basePath ? basePath + '/' + item.name : item.name;
+        const tr = document.createElement('tr');
+        if (item.is_dir) {
+            tr.innerHTML = `
+                <td class="file-icon text-center"><i class="fas fa-folder text-warning"></i></td>
+                <td>
+                    <a href="#" class="fw-semibold text-decoration-none dir-link" data-path="${itemPath}">
+                        ${escHtml(item.name)}
+                    </a>
+                </td>
+                <td class="text-muted small">—</td>
+                <td class="text-muted small">${fmtTime(item.mtime)}</td>
+                <td class="text-end">
+                    <span class="text-muted small">資料夾</span>
+                </td>`;
+        } else {
+            const ext = item.name.includes('.') ? item.name.split('.').pop().toLowerCase() : '';
+            const iconClass = fileIcon(ext);
+            const previewBtn = canPreview(item.name)
+                ? `<button class="btn btn-outline-secondary btn-sm py-0 px-1 preview-btn" data-path="${itemPath}" title="預覽">
+                        <i class="fas fa-eye"></i>
+                   </button>`
+                : '';
+            tr.innerHTML = `
+                <td class="file-icon text-center"><i class="${iconClass}"></i></td>
+                <td class="text-break">${escHtml(item.name)}</td>
+                <td class="text-muted small">${fmtBytes(item.size)}</td>
+                <td class="text-muted small">${fmtTime(item.mtime)}</td>
+                <td class="text-end">
+                    <div class="d-flex gap-1 justify-content-end">
+                        ${previewBtn}
+                        <a href="/api/files/download?path=${encPath(itemPath)}"
+                           class="btn btn-outline-primary btn-sm py-0 px-1" title="下載" download>
+                            <i class="fas fa-download"></i>
+                        </a>
+                    </div>
+                </td>`;
+        }
+        tbody.appendChild(tr);
+    });
+
+    // 資料夾點擊
+    tbody.querySelectorAll('.dir-link').forEach(a => {
+        a.addEventListener('click', e => {
+            e.preventDefault();
+            loadDir(a.dataset.path);
+        });
+    });
+
+    // 預覽點擊
+    tbody.querySelectorAll('.preview-btn').forEach(btn => {
+        btn.addEventListener('click', () => openPreview(btn.dataset.path));
+    });
+}
+
+function escHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function fileIcon(ext) {
+    const map = {
+        json: 'fas fa-file-code text-info',
+        log:  'fas fa-file-alt text-secondary',
+        pcap: 'fas fa-file-archive text-primary',
+        txt:  'fas fa-file-alt text-muted',
+        md:   'fas fa-file-alt text-dark',
+        csv:  'fas fa-file-csv text-success',
+        zip:  'fas fa-file-archive text-warning',
+        gz:   'fas fa-file-archive text-warning',
+        rules:'fas fa-shield-alt text-danger',
+        py:   'fas fa-file-code text-warning',
+        sh:   'fas fa-terminal text-dark',
+    };
+    return map[ext] || 'fas fa-file text-secondary';
+}
+
+// ── 預覽 ──────────────────────────────────────
+function openPreview(path) {
+    const name = path.split('/').pop();
+    document.getElementById('preview-title').innerHTML = `<i class="fas fa-eye me-1"></i>${escHtml(name)}`;
+    document.getElementById('preview-loading').classList.remove('d-none');
+    document.getElementById('preview-content').style.display = 'none';
+    document.getElementById('preview-truncated').classList.add('d-none');
+    document.getElementById('preview-download-btn').href = '/api/files/download?path=' + encPath(path);
+    previewModal.show();
+
+    fetch('/api/files/preview?path=' + encPath(path))
+        .then(r => r.json())
+        .then(d => {
+            document.getElementById('preview-loading').classList.add('d-none');
+            if (d.error) {
+                document.getElementById('preview-content').textContent = '錯誤：' + d.error;
+                document.getElementById('preview-content').style.display = 'block';
+                return;
+            }
+            if (d.truncated) {
+                document.getElementById('preview-truncated').classList.remove('d-none');
+            }
+            document.getElementById('preview-content').textContent = d.content;
+            document.getElementById('preview-content').style.display = 'block';
+        })
+        .catch(() => {
+            document.getElementById('preview-loading').classList.add('d-none');
+            document.getElementById('preview-content').textContent = '載入失敗';
+            document.getElementById('preview-content').style.display = 'block';
+        });
+}
+
+// ── 上傳面板 ──────────────────────────────────
+document.getElementById('btn-upload-open').addEventListener('click', () => {
+    document.getElementById('upload-panel').classList.toggle('d-none');
+});
+document.getElementById('btn-upload-close').addEventListener('click', () => {
+    document.getElementById('upload-panel').classList.add('d-none');
+});
+
+const dropZone  = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+
+dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    addFiles([...e.dataTransfer.files]);
+});
+fileInput.addEventListener('change', () => {
+    addFiles([...fileInput.files]);
+    fileInput.value = '';
+});
+
+function addFiles(files) {
+    pendingFiles = pendingFiles.concat(files);
+    renderUploadList();
+}
+
+function renderUploadList() {
+    const ul = document.getElementById('upload-file-list');
+    ul.innerHTML = '';
+    pendingFiles.forEach((f, idx) => {
+        const li = document.createElement('li');
+        li.className = 'upload-list-item d-flex justify-content-between align-items-center border-bottom py-1';
+        li.innerHTML = `<span class="text-truncate me-2">${escHtml(f.name)}</span>
+                        <span class="text-muted flex-shrink-0">${fmtBytes(f.size)}
+                            <button type="button" class="btn btn-sm btn-link text-danger p-0 ms-1 rm-btn" data-idx="${idx}">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </span>`;
+        ul.appendChild(li);
+    });
+    ul.querySelectorAll('.rm-btn').forEach(b => {
+        b.addEventListener('click', () => {
+            pendingFiles.splice(parseInt(b.dataset.idx), 1);
+            renderUploadList();
+        });
+    });
+    document.getElementById('btn-upload-start').disabled = pendingFiles.length === 0;
+}
+
+document.getElementById('btn-upload-clear').addEventListener('click', () => {
+    pendingFiles = [];
+    renderUploadList();
+    document.getElementById('upload-result').textContent = '';
+});
+
+document.getElementById('btn-upload-start').addEventListener('click', () => {
+    if (pendingFiles.length === 0) return;
+    const btn = document.getElementById('btn-upload-start');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>上傳中...';
+
+    const formData = new FormData();
+    formData.append('path', currentPath);
+    pendingFiles.forEach(f => formData.append('files', f));
+
+    fetch('/api/files/upload', { method: 'POST', body: formData })
+        .then(r => r.json())
+        .then(d => {
+            const el = document.getElementById('upload-result');
+            if (d.ok) {
+                el.innerHTML = `<span class="text-success fw-semibold">✔ 已上傳：${d.saved.join('、')}</span>`;
+                pendingFiles = [];
+                renderUploadList();
+                loadDir(currentPath);
+            } else {
+                el.innerHTML = `<span class="text-danger">✘ ${d.error}</span>`;
+            }
+        })
+        .catch(() => {
+            document.getElementById('upload-result').innerHTML = '<span class="text-danger">✘ 上傳失敗</span>';
+        })
+        .finally(() => {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-upload me-1"></i>開始上傳';
+        });
+});
+
+// ── 新增資料夾 ────────────────────────────────
+document.getElementById('btn-mkdir').addEventListener('click', () => {
+    document.getElementById('mkdir-name').value = '';
+    document.getElementById('mkdir-error').classList.add('d-none');
+    mkdirModal.show();
+    setTimeout(() => document.getElementById('mkdir-name').focus(), 300);
+});
+
+document.getElementById('mkdir-name').addEventListener('keydown', e => {
+    if (e.key === 'Enter') document.getElementById('btn-mkdir-ok').click();
+});
+
+document.getElementById('btn-mkdir-ok').addEventListener('click', () => {
+    const name = document.getElementById('mkdir-name').value.trim();
+    const errEl = document.getElementById('mkdir-error');
+    if (!name) { errEl.textContent = '請輸入名稱'; errEl.classList.remove('d-none'); return; }
+
+    fetch('/api/files/mkdir', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: currentPath, name })
+    })
+    .then(r => r.json())
+    .then(d => {
+        if (d.ok) {
+            mkdirModal.hide();
+            loadDir(currentPath);
+        } else {
+            errEl.textContent = d.error || '建立失敗';
+            errEl.classList.remove('d-none');
+        }
+    })
+    .catch(() => {
+        errEl.textContent = '請求失敗';
+        errEl.classList.remove('d-none');
+    });
+});
+
+// ── 初始載入 ──────────────────────────────────
+loadDir(currentPath);
+</script>
+{% endblock %}
