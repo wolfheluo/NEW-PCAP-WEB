@@ -103,6 +103,22 @@
                            min="0" max="16" step="1" value="2">
                 </div>
             </div>
+            <!-- 單次側錄預設時長 -->
+            <div class="col-md-6">
+                <div class="p-3 border rounded h-100">
+                    <div class="fw-semibold mb-1">單次側錄預設時長</div>
+                    <div class="text-muted small mb-3">每次側錄達到此時長後，系統將自動停止錄製。預設 6 小時 10 分鐘。</div>
+                    <div class="d-flex align-items-center gap-2">
+                        <input type="number" id="input-capture-hours" class="form-control" style="width:90px"
+                               min="0" max="99" step="1" value="6" placeholder="時">
+                        <span class="text-muted">小時</span>
+                        <input type="number" id="input-capture-minutes" class="form-control" style="width:90px"
+                               min="0" max="59" step="1" value="10" placeholder="分">
+                        <span class="text-muted">分鐘</span>
+                    </div>
+                </div>
+            </div>
+
             <!-- 自動刪除無風險 PCAP -->
             <div class="col-md-6">
                 <div class="p-3 border rounded h-100">
@@ -209,6 +225,12 @@ fetch('/api/settings/config')
             document.getElementById('input-max-concurrent').value = d.max_concurrent_analysis;
         }
         document.getElementById('input-delete-safe-pcap').checked = !!d.delete_safe_pcap;
+        if (d.capture_duration_hours !== undefined) {
+            document.getElementById('input-capture-hours').value = d.capture_duration_hours;
+        }
+        if (d.capture_duration_minutes !== undefined) {
+            document.getElementById('input-capture-minutes').value = d.capture_duration_minutes;
+        }
     });
 
 // ── 儲存設定 ──────────────────────────────────────
@@ -216,14 +238,26 @@ document.getElementById('btn-save-config').addEventListener('click', function ()
     const mb = parseInt(document.getElementById('input-pcap-mb').value, 10);
     const projectDir = document.getElementById('input-project-dir').value.trim();
     const mca = parseInt(document.getElementById('input-max-concurrent').value, 10);
+    const durH = parseInt(document.getElementById('input-capture-hours').value, 10) || 0;
+    const durM = parseInt(document.getElementById('input-capture-minutes').value, 10) || 0;
     const msgEl = document.getElementById('config-save-msg');
     if (!mb || mb < 10 || mb > 10240) {
         msgEl.textContent = '⚠ 請輸入 10 ~ 10240 MB 之間的數值';
         msgEl.className = 'text-danger small';
         return;
     }
-    if (!mca || mca < 0 || mca > 16) {
+    if (isNaN(mca) || mca < 0 || mca > 16) {
         msgEl.textContent = '⚠ 同時分析上限請輸入 0（0不限制）或 1 ~ 16';
+        msgEl.className = 'text-danger small';
+        return;
+    }
+    if (durH === 0 && durM === 0) {
+        msgEl.textContent = '⚠ 側錄時長不可為 0，請至少設定 1 分鐘';
+        msgEl.className = 'text-danger small';
+        return;
+    }
+    if (durH < 0 || durH > 99 || durM < 0 || durM > 59) {
+        msgEl.textContent = '⚠ 請輸入正確的時長（小時 0-99，分鐘 0-59）';
         msgEl.className = 'text-danger small';
         return;
     }
@@ -232,18 +266,21 @@ document.getElementById('btn-save-config').addEventListener('click', function ()
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-            pcap_split_mb:           mb,
-            project_dir:             projectDir,
-            checksum_offload:        document.getElementById('input-checksum-offload').checked,
-            max_concurrent_analysis: mca,
-            delete_safe_pcap:        document.getElementById('input-delete-safe-pcap').checked,
+            pcap_split_mb:              mb,
+            project_dir:                projectDir,
+            checksum_offload:           document.getElementById('input-checksum-offload').checked,
+            max_concurrent_analysis:    mca,
+            delete_safe_pcap:           document.getElementById('input-delete-safe-pcap').checked,
+            capture_duration_hours:     durH,
+            capture_duration_minutes:   durM,
         })
     })
     .then(r => r.json())
     .then(d => {
         if (d.ok) {
             const dirMsg = d.project_dir ? `「${d.project_dir}」` : '預設路徑';
-            msgEl.textContent = `✔ 已儲存（${d.pcap_split_mb} MB，${dirMsg}，同時分析 ${ d.max_concurrent_analysis === 0 ? '不限制' : d.max_concurrent_analysis + ' 個' }，無風險 PCAP ${ d.delete_safe_pcap ? '自動刪除' : '保留' }）`;
+            const durMsg = `${d.capture_duration_hours}h ${d.capture_duration_minutes}m`;
+            msgEl.textContent = `✔ 已儲存（${d.pcap_split_mb} MB，${dirMsg}，同時分析 ${ d.max_concurrent_analysis === 0 ? '不限制' : d.max_concurrent_analysis + ' 個' }，無風險 PCAP ${ d.delete_safe_pcap ? '自動刪除' : '保留' }，側錄時長 ${durMsg}）`;
             msgEl.className = 'text-success fw-semibold small';
         } else {
             msgEl.textContent = '✘ ' + (d.error || '儲存失敗');

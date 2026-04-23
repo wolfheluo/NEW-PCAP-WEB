@@ -46,6 +46,7 @@ PCAP_SPLIT_SIZE_KB = 204800  # 預設 200 MB
 CHECKSUM_OFFLOAD   = False   # NIC Checksum Offload，啟用則加 -k none
 MAX_CONCURRENT_ANALYSIS = 2  # 同時分析的 PCAP 上限（預設 2）
 DELETE_SAFE_PCAP      = False  # 分析後自動刪除無 P1/P2 告警的 PCAP
+CAPTURE_DURATION_SECONDS = 6 * 3600 + 10 * 60  # 單次側錄預設時長（秒），預設 6h 10m
 
 os.makedirs(PROJECT_DIR, exist_ok=True)
 
@@ -77,6 +78,10 @@ if 'max_concurrent_analysis' in _cfg:
     MAX_CONCURRENT_ANALYSIS = max(0, int(_cfg['max_concurrent_analysis']))
 if 'delete_safe_pcap' in _cfg:
     DELETE_SAFE_PCAP = bool(_cfg['delete_safe_pcap'])
+if 'capture_duration_hours' in _cfg or 'capture_duration_minutes' in _cfg:
+    _h = int(_cfg.get('capture_duration_hours', 6))
+    _m = int(_cfg.get('capture_duration_minutes', 10))
+    CAPTURE_DURATION_SECONDS = _h * 3600 + _m * 60
 
 os.makedirs(PROJECT_DIR, exist_ok=True)
 
@@ -780,6 +785,48 @@ def dashboard(task_name):
 
 
 # ─────────────────────────────────────────────
+# 自動停止計時執行緒
+# ─────────────────────────────────────────────
+
+def _auto_stop_after_duration(project_name: str, duration_seconds: int):
+    """在 duration_seconds 秒後，若專案仍在側錄中，自動停止。"""
+    time.sleep(duration_seconds)
+    with capture_states_lock:
+        state = capture_states.get(project_name)
+        if not state or state.get('status') != 'capturing':
+            return
+        state['status'] = 'stopping'
+        proc = state['process']
+
+    print(f"[auto-stop] 專案「{project_name}」已達到設定時長 {duration_seconds}s，自動停止側錄")
+    try:
+        if os.name == 'nt':
+            import signal as _signal
+            os.kill(proc.pid, _signal.CTRL_BREAK_EVENT)
+        else:
+            proc.terminate()
+        proc.wait(timeout=15)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+    with capture_states_lock:
+        if project_name in capture_states:
+            capture_states[project_name]['status'] = 'stopped'
+            final_packets = capture_states[project_name].get('packet_count', 0)
+        else:
+            final_packets = 0
+
+    _save_pcap_stats(project_name, final_packets)
+    _append_capture_log(project_name, f'側錄達到設定時長（{duration_seconds // 3600}h {(duration_seconds % 3600) // 60}m），已自動停止，正在排入分析佇列…', 'stop')
+    socketio.emit('capture_stopped', {'project': project_name, 'auto_stopped': True})
+
+
+# ─────────────────────────────────────────────
 # 側錄 API
 # ─────────────────────────────────────────────
 
@@ -890,6 +937,7 @@ def api_capture_start():
     threading.Thread(target=_read_dumpcap_stderr, args=(project_name, proc), daemon=True).start()
     threading.Thread(target=_poll_packet_count, args=(project_name, pcap_dir), daemon=True).start()
     threading.Thread(target=_watch_pcap_files, args=(project_name, pcap_dir, filter_ips), daemon=True).start()
+    threading.Thread(target=_auto_stop_after_duration, args=(project_name, CAPTURE_DURATION_SECONDS), daemon=True).start()
 
     split_mb = PCAP_SPLIT_SIZE_KB // 1024
     _append_capture_log(project_name, f'開始側錄（介面 {iface_index}），每 {split_mb} MB 自動切割', 'start')
@@ -1207,18 +1255,22 @@ def _get_suricata_rules():
 @app.route('/api/settings/config', methods=['GET'])
 def api_settings_get_config():
     cfg = _load_settings()
+    _dur_h = cfg.get('capture_duration_hours', CAPTURE_DURATION_SECONDS // 3600)
+    _dur_m = cfg.get('capture_duration_minutes', (CAPTURE_DURATION_SECONDS % 3600) // 60)
     return jsonify({
-        'pcap_split_mb':          cfg.get('pcap_split_mb', PCAP_SPLIT_SIZE_KB // 1024),
-        'project_dir':            cfg.get('project_dir', ''),
-        'checksum_offload':       cfg.get('checksum_offload', False),
+        'pcap_split_mb':           cfg.get('pcap_split_mb', PCAP_SPLIT_SIZE_KB // 1024),
+        'project_dir':             cfg.get('project_dir', ''),
+        'checksum_offload':        cfg.get('checksum_offload', False),
         'max_concurrent_analysis': cfg.get('max_concurrent_analysis', MAX_CONCURRENT_ANALYSIS),
-        'delete_safe_pcap':       cfg.get('delete_safe_pcap', DELETE_SAFE_PCAP),
+        'delete_safe_pcap':        cfg.get('delete_safe_pcap', DELETE_SAFE_PCAP),
+        'capture_duration_hours':  int(_dur_h),
+        'capture_duration_minutes': int(_dur_m),
     })
 
 
 @app.route('/api/settings/config', methods=['POST'])
 def api_settings_save_config():
-    global PCAP_SPLIT_SIZE_KB, PROJECT_DIR, CHECKSUM_OFFLOAD, MAX_CONCURRENT_ANALYSIS, _analysis_semaphore, DELETE_SAFE_PCAP
+    global PCAP_SPLIT_SIZE_KB, PROJECT_DIR, CHECKSUM_OFFLOAD, MAX_CONCURRENT_ANALYSIS, _analysis_semaphore, DELETE_SAFE_PCAP, CAPTURE_DURATION_SECONDS
     data = request.get_json(force=True)
     save = {}
 
@@ -1267,10 +1319,23 @@ def api_settings_save_config():
     DELETE_SAFE_PCAP = bool(data.get('delete_safe_pcap', False))
     save['delete_safe_pcap'] = DELETE_SAFE_PCAP
 
+    # 單次側錄時長
+    try:
+        dur_h = max(0, min(99, int(data.get('capture_duration_hours', CAPTURE_DURATION_SECONDS // 3600))))
+        dur_m = max(0, min(59, int(data.get('capture_duration_minutes', (CAPTURE_DURATION_SECONDS % 3600) // 60))))
+        if dur_h == 0 and dur_m == 0:
+            return jsonify({'ok': False, 'error': '側錄時長不可為 0，請至少設定 1 分鐘'}), 400
+        CAPTURE_DURATION_SECONDS = dur_h * 3600 + dur_m * 60
+        save['capture_duration_hours']   = dur_h
+        save['capture_duration_minutes'] = dur_m
+    except (ValueError, TypeError):
+        return jsonify({'ok': False, 'error': '無效的側錄時長數值'}), 400
+
     _save_settings(save)
     return jsonify({'ok': True, 'pcap_split_mb': save['pcap_split_mb'], 'project_dir': PROJECT_DIR,
                     'checksum_offload': CHECKSUM_OFFLOAD, 'max_concurrent_analysis': MAX_CONCURRENT_ANALYSIS,
-                    'delete_safe_pcap': DELETE_SAFE_PCAP})
+                    'delete_safe_pcap': DELETE_SAFE_PCAP,
+                    'capture_duration_hours': dur_h, 'capture_duration_minutes': dur_m})
 
 
 @app.route('/api/settings/check')
