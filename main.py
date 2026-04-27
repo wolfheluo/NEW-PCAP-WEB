@@ -390,6 +390,17 @@ def _analyze_single_pcap(project_name, pcap_file, filter_ips):
     pcap_stem = Path(pcap_file).stem
     fname = os.path.basename(pcap_file)
 
+    # 執行緒啟動時立即計數（在 Semaphore 前），避免「Semaphore 已釋放但計數尚未 +1」的競態
+    # 導致 analyzing 提早歸零、done_ev 提前觸發、merge 在所有分析完成前就執行的 bug
+    with capture_states_lock:
+        if project_name in capture_states:
+            current = capture_states[project_name].get('analyzing', 0)
+            capture_states[project_name]['analyzing'] = current + 1
+            if current == 0:
+                ev = capture_states[project_name].get('_analysis_done_event')
+                if ev:
+                    ev.clear()
+
     # 限制同時分析數量，超過上限的執行緒在此等候
     _analysis_semaphore.acquire()
     try:
@@ -397,21 +408,21 @@ def _analyze_single_pcap(project_name, pcap_file, filter_ips):
                                    project_dir, pcap_stem, fname)
     finally:
         _analysis_semaphore.release()
+        # 執行緒完全結束後才遞減計數（含 Semaphore 釋放後的清理）
+        with capture_states_lock:
+            if project_name in capture_states:
+                n = max(0, capture_states[project_name].get('analyzing', 1) - 1)
+                capture_states[project_name]['analyzing'] = n
+                if n == 0:
+                    ev = capture_states[project_name].get('_analysis_done_event')
+                    if ev:
+                        ev.set()
 
 
 def _analyze_single_pcap_inner(project_name, pcap_file, filter_ips,
                                 project_dir, pcap_stem, fname):
-    """實際分析邏輯（由 _analyze_single_pcap 透過 Semaphore 呼叫）"""
-
-    with capture_states_lock:
-        if project_name in capture_states:
-            current = capture_states[project_name].get('analyzing', 0)
-            capture_states[project_name]['analyzing'] = current + 1
-            # 第一個執行緒啟動時清除 Event，避免沿用前一批次的已完成狀態
-            if current == 0:
-                ev = capture_states[project_name].get('_analysis_done_event')
-                if ev:
-                    ev.clear()
+    """實際分析邏輯（由 _analyze_single_pcap 透過 Semaphore 呼叫）
+    注意：analyzing 計數器的 +1/-1 已移至外層 _analyze_single_pcap 管理，此處不再接觸。"""
 
     def _emit(stage, percent):
         pcap_dir_path = get_pcap_dir(project_name)
@@ -475,16 +486,6 @@ def _analyze_single_pcap_inner(project_name, pcap_file, filter_ips,
     except Exception as e:
         socketio.emit('analysis_error', {'project': project_name, 'error': str(e)})
         _append_capture_log(project_name, f'分析發生錯誤：{e}', 'error')
-    finally:
-        with capture_states_lock:
-            if project_name in capture_states:
-                n = max(0, capture_states[project_name].get('analyzing', 1) - 1)
-                capture_states[project_name]['analyzing'] = n
-                # 最後一個執行緒完成時喚醒等待方
-                if n == 0:
-                    ev = capture_states[project_name].get('_analysis_done_event')
-                    if ev:
-                        ev.set()
 
 
 def _watch_pcap_files(project_name, pcap_dir, filter_ips):
@@ -533,7 +534,7 @@ def _watch_pcap_files(project_name, pcap_dir, filter_ips):
             with capture_states_lock:
                 still_analyzing = capture_states.get(project_name, {}).get('analyzing', 0) > 0
             if still_analyzing:
-                _get_analysis_done_event(project_name).wait(timeout=600)
+                _get_analysis_done_event(project_name).wait()  # 無限等待，finally 保證必定完成
 
             # 所有 PCAP 完成後統一合併一次（O(n) 而非 O(n²)）
             _append_capture_log(project_name, '合併所有分析結果…', 'merging')
@@ -613,8 +614,8 @@ def api_resume(project_name):
                 args=(project_name, pcap_file, filter_ips),
                 daemon=True
             ).start()
-        # 用 Event 等待所有執行緒完成（取代每秒輪詢，最多等 300 秒）
-        done_ev.wait(timeout=300)
+        # 無限等待直到所有執行緒完成（_analyze_single_pcap finally 保證計數必然歸零）
+        done_ev.wait()
         # 統一合併一次（O(n) 而非 O(n²)）
         _append_capture_log(project_name, '合併所有分析結果…', 'merging')
         merge_suricata_logs(project_dir)
@@ -697,8 +698,8 @@ def api_reanalyze(project_name):
                 args=(project_name, pcap_file, filter_ips),
                 daemon=True
             ).start()
-        # 用 Event 等待所有執行緒完成（取代每秒輪詢，最多等 300 秒）
-        done_ev.wait(timeout=300)
+        # 無限等待直到所有執行緒完成（_analyze_single_pcap finally 保證計數必然歸零）
+        done_ev.wait()
         # 統一合併一次（O(n) 而非 O(n²)）
         _append_capture_log(project_name, '合併所有分析結果…', 'merging')
         merge_suricata_logs(project_dir)
