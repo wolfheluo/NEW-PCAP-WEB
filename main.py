@@ -587,6 +587,25 @@ def api_resume(project_name):
             remaining.append(pcap_file)
 
     if not remaining:
+        # 所有 PCAP 已分析，但若合併結果不完整（如程式中途重啟），補跑合併
+        summary_file = os.path.join(project_dir, 'analysis_summary.json')
+        merged_fast = os.path.join(project_dir, 'merged_fast.log')
+        if (not os.path.exists(summary_file) or not os.path.exists(merged_fast)) and all_pcaps:
+            filter_ips = state.get('filter_ips') or parse_filter_ips(
+                _load_project_settings(project_name).get('exclude_ips', '')
+            )
+            def _run_merge_only():
+                _append_capture_log(project_name, '合併所有分析結果…', 'merging')
+                merge_suricata_logs(project_dir)
+                merge_eve_json(project_dir)
+                merge_all_results(project_dir, filter_ips)
+                analyzed = len(glob.glob(os.path.join(project_dir, '*_analysis.json')))
+                socketio.emit('all_analysis_done', {
+                    'project': project_name,
+                    'analyzed': analyzed, 'total': len(all_pcaps),
+                })
+            threading.Thread(target=_run_merge_only, daemon=True).start()
+            return jsonify({'ok': True, 'remaining': 0, 'merging': True})
         return jsonify({'error': '所有 PCAP 已分析完成'}), 400
 
     # 優先用記憶體中的 filter_ips，否則從持久化設定讀取
