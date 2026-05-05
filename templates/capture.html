@@ -260,7 +260,7 @@
 
 {% block scripts %}
 <!-- Socket.IO -->
-<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+<script src="{{ url_for('static', filename='js/socket.io.min.js') }}"></script>
 <script>
 const PROJECT_NAME = {{ project_name | tojson }};
 const socket = io();
